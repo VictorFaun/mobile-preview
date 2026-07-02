@@ -5,6 +5,10 @@
   "version": "0.0.1",
   "publisher": "VictorFaundez",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/VictorFaun/mobile-preview.git"
+  },
   "icon": "media/icon.png",
   "keywords": [
     "mobile",
