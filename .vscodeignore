@@ -1,0 +1,8 @@
+.vscode/**
+.vscode-test/**
+.claude/**
+src/**
+.gitignore
+tsconfig.json
+**/*.map
+media/marketplace-icon.svg

@@ -1,0 +1,96 @@
+{
+  "name": "mobile-preview",
+  "displayName": "Mobile Preview",
+  "description": "Live mobile device preview for local dev servers, like Chrome DevTools' device toolbar, opened as an editor tab beside your code.",
+  "version": "0.0.1",
+  "publisher": "VictorFaundez",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "keywords": [
+    "mobile",
+    "preview",
+    "device",
+    "emulator",
+    "responsive",
+    "ionic",
+    "chrome devtools"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "mobilePreview.open",
+        "title": "Open Mobile Preview",
+        "icon": "$(device-mobile)",
+        "category": "Mobile Preview"
+      },
+      {
+        "command": "mobilePreview.refresh",
+        "title": "Refresh Preview",
+        "icon": "$(refresh)",
+        "category": "Mobile Preview"
+      },
+      {
+        "command": "mobilePreview.setUrl",
+        "title": "Set Preview URL...",
+        "category": "Mobile Preview"
+      },
+      {
+        "command": "mobilePreview.screenshot",
+        "title": "Take Screenshot",
+        "icon": "$(device-camera)",
+        "category": "Mobile Preview"
+      },
+      {
+        "command": "mobilePreview.toggleControls",
+        "title": "Toggle Settings Panel",
+        "icon": "$(gear)",
+        "category": "Mobile Preview"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "mobilePreview.open",
+          "group": "navigation@1",
+          "when": "activeWebviewPanelId != 'mobilePreview.panel'"
+        },
+        {
+          "command": "mobilePreview.refresh",
+          "when": "activeWebviewPanelId == 'mobilePreview.panel'",
+          "group": "navigation@1"
+        },
+        {
+          "command": "mobilePreview.screenshot",
+          "when": "activeWebviewPanelId == 'mobilePreview.panel'",
+          "group": "navigation@2"
+        },
+        {
+          "command": "mobilePreview.toggleControls",
+          "when": "activeWebviewPanelId == 'mobilePreview.panel'",
+          "group": "navigation@3"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.4.0"
+  },
+  "dependencies": {
+    "playwright": "^1.61.1"
+  }
+}
