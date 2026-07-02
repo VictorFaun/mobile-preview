@@ -29,6 +29,15 @@ const DEFAULT_STATE: PreviewState = {
 
 const STATE_KEY = 'mobilePreview.state';
 
+function getState(context: vscode.ExtensionContext): PreviewState {
+  return context.globalState.get<PreviewState>(STATE_KEY, DEFAULT_STATE);
+}
+
+function updateState(context: vscode.ExtensionContext, patch: Partial<PreviewState>) {
+  const next = { ...getState(context), ...patch };
+  context.globalState.update(STATE_KEY, next);
+}
+
 interface DevicePreset {
   id: string;
   label: string;
@@ -109,27 +118,49 @@ function resolveDeviceSpec(state: PreviewState): DeviceSpec {
 }
 
 export function activate(context: vscode.ExtensionContext) {
-  const manager = new MobilePreviewPanelManager(context);
+  const secondaryViewProvider = new MobilePreviewViewProvider(context);
+  const primaryViewProvider = new MobilePreviewViewProvider(context);
+  const panelManager = new MobilePreviewPanelManager(context);
+
+  const allHostOwners = [panelManager, secondaryViewProvider, primaryViewProvider];
+
+  function getActiveHost(): MobilePreviewHost | undefined {
+    if (panelManager.isActive()) return panelManager.host;
+    if (secondaryViewProvider.isVisible()) return secondaryViewProvider.host;
+    if (primaryViewProvider.isVisible()) return primaryViewProvider.host;
+    return allHostOwners.map((o) => o.host).find((h) => h !== undefined);
+  }
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('mobilePreview.open', () => manager.open()),
-    vscode.commands.registerCommand('mobilePreview.refresh', () => manager.refresh()),
+    vscode.window.registerWebviewViewProvider('mobilePreview.view', secondaryViewProvider, {
+      webviewOptions: { retainContextWhenHidden: true }
+    }),
+    vscode.window.registerWebviewViewProvider('mobilePreview.viewPrimary', primaryViewProvider, {
+      webviewOptions: { retainContextWhenHidden: true }
+    }),
+    vscode.commands.registerCommand('mobilePreview.open', () => panelManager.open()),
+    vscode.commands.registerCommand('mobilePreview.refresh', () => getActiveHost()?.refresh()),
     vscode.commands.registerCommand('mobilePreview.setUrl', async () => {
-      const state = manager.getState();
+      const state = getState(context);
       const value = await vscode.window.showInputBox({
         prompt: 'URL to preview (e.g. http://localhost:3000)',
         value: state.url,
         placeHolder: 'http://localhost:3000'
       });
-      if (value) {
-        manager.updateState({ url: value });
-        manager.loadUrl(value);
+      if (!value) return;
+      updateState(context, { url: value });
+      for (const owner of allHostOwners) {
+        owner.host?.loadUrl(value);
       }
     }),
-    vscode.commands.registerCommand('mobilePreview.screenshot', () => manager.takeScreenshot()),
-    vscode.commands.registerCommand('mobilePreview.toggleControls', () => manager.toggleControls()),
-    vscode.window.onDidChangeActiveColorTheme(() => manager.onActiveColorThemeChanged()),
-    { dispose: () => manager.dispose() }
+    vscode.commands.registerCommand('mobilePreview.screenshot', () => getActiveHost()?.takeScreenshot()),
+    vscode.commands.registerCommand('mobilePreview.toggleControls', () => getActiveHost()?.toggleControls()),
+    vscode.window.onDidChangeActiveColorTheme(() => {
+      for (const owner of allHostOwners) {
+        owner.host?.onActiveColorThemeChanged();
+      }
+    }),
+    ...allHostOwners.map((owner) => ({ dispose: () => owner.dispose() }))
   );
 }
 
@@ -280,119 +311,80 @@ class BrowserSession {
   }
 }
 
-class MobilePreviewPanelManager {
-  public static readonly viewType = 'mobilePreview.panel';
+/**
+ * Owns the BrowserSession and message-handling logic for one hosted webview
+ * (either the sidebar view or the editor panel). The two host classes below
+ * each create one of these and forward webview lifecycle events into it.
+ */
+class MobilePreviewHost {
+  private session: BrowserSession;
 
-  private panel?: vscode.WebviewPanel;
-  private session?: BrowserSession;
-
-  constructor(private readonly context: vscode.ExtensionContext) {}
-
-  public getState(): PreviewState {
-    return this.context.globalState.get<PreviewState>(STATE_KEY, DEFAULT_STATE);
-  }
-
-  public updateState(patch: Partial<PreviewState>) {
-    const next = { ...this.getState(), ...patch };
-    this.context.globalState.update(STATE_KEY, next);
-  }
-
-  public postMessage(message: unknown) {
-    this.panel?.webview.postMessage(message);
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    private readonly postMessage: (message: unknown) => void
+  ) {
+    this.session = new BrowserSession(postMessage);
   }
 
   public async refresh() {
-    await this.session?.refresh();
+    await this.session.refresh();
   }
 
   public async loadUrl(url: string) {
-    await this.session?.loadUrl(url);
+    await this.session.loadUrl(url);
   }
 
   public toggleControls() {
-    const visible = !this.getState().controlsVisible;
-    this.updateState({ controlsVisible: visible });
+    const visible = !getState(this.context).controlsVisible;
+    updateState(this.context, { controlsVisible: visible });
     this.postMessage({ type: 'controlsVisible', visible });
   }
 
   public async onActiveColorThemeChanged() {
-    const state = this.getState();
+    const state = getState(this.context);
     if (state.colorScheme === 'device') {
-      await this.session?.setDevice(resolveDeviceSpec(state));
+      await this.session.setDevice(resolveDeviceSpec(state));
     }
   }
 
-  public open() {
-    if (this.panel) {
-      this.panel.reveal(vscode.ViewColumn.Beside);
-      return;
-    }
-
-    this.panel = vscode.window.createWebviewPanel(
-      MobilePreviewPanelManager.viewType,
-      'Mobile Preview',
-      vscode.ViewColumn.Beside,
-      {
-        enableScripts: true,
-        retainContextWhenHidden: true,
-        localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'media')]
-      }
-    );
-    this.panel.iconPath = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'icon.svg');
-    this.session = new BrowserSession((message) => this.postMessage(message));
-
-    this.panel.webview.html = this.getHtml(this.panel.webview);
-    this.panel.webview.onDidReceiveMessage((message) => this.handleMessage(message));
-    this.panel.onDidDispose(() => {
-      this.session?.dispose();
-      this.session = undefined;
-      this.panel = undefined;
-    });
-  }
-
-  public dispose() {
-    this.session?.dispose();
-    this.panel?.dispose();
-  }
-
-  private async handleMessage(message: any) {
+  public async handleMessage(message: any) {
     switch (message?.type) {
       case 'ready': {
-        const state = this.getState();
+        const state = getState(this.context);
         this.postMessage({ type: 'init', state, devicePresets: DEVICE_PRESETS.map(({ id, label }) => ({ id, label })) });
-        await this.session?.setDevice(resolveDeviceSpec(state));
-        await this.session?.loadUrl(state.url);
+        await this.session.setDevice(resolveDeviceSpec(state));
+        await this.session.loadUrl(state.url);
         break;
       }
       case 'deviceChange': {
-        this.updateState({
+        updateState(this.context, {
           deviceId: message.deviceId,
           orientation: message.orientation,
           customWidth: message.customWidth,
           customHeight: message.customHeight,
           colorScheme: message.colorScheme
         });
-        await this.session?.setDevice(resolveDeviceSpec(this.getState()));
+        await this.session.setDevice(resolveDeviceSpec(getState(this.context)));
         break;
       }
       case 'loadUrl':
-        this.updateState({ url: message.url });
-        await this.session?.loadUrl(message.url);
+        updateState(this.context, { url: message.url });
+        await this.session.loadUrl(message.url);
         break;
       case 'touch':
-        await this.session?.dispatchTouch(message.kind, message.x, message.y);
+        await this.session.dispatchTouch(message.kind, message.x, message.y);
         break;
       case 'wheel':
-        await this.session?.dispatchWheel(message.x, message.y, message.deltaX, message.deltaY);
+        await this.session.dispatchWheel(message.x, message.y, message.deltaX, message.deltaY);
         break;
       case 'text':
-        await this.session?.insertText(message.text);
+        await this.session.insertText(message.text);
         break;
       case 'key':
-        await this.session?.dispatchKey(message.key);
+        await this.session.dispatchKey(message.key);
         break;
       case 'saveState':
-        this.updateState(message.state ?? {});
+        updateState(this.context, message.state ?? {});
         break;
       case 'error':
         vscode.window.showErrorMessage(`Mobile Preview: ${message.message}`);
@@ -401,7 +393,6 @@ class MobilePreviewPanelManager {
   }
 
   public async takeScreenshot() {
-    if (!this.session) return;
     const buffer = await this.session.screenshot();
     if (!buffer) {
       vscode.window.showWarningMessage('Mobile Preview: nothing to capture yet — load a URL first.');
@@ -428,12 +419,99 @@ class MobilePreviewPanelManager {
       });
   }
 
-  private getHtml(webview: vscode.Webview): string {
-    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'main.js'));
-    const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri, 'media', 'style.css'));
-    const nonce = getNonce();
+  public getHtml(webview: vscode.Webview): string {
+    return buildHtml(webview, this.context.extensionUri);
+  }
 
-    return /* html */ `<!DOCTYPE html>
+  public dispose() {
+    this.session.dispose();
+  }
+}
+
+class MobilePreviewViewProvider implements vscode.WebviewViewProvider {
+  private view?: vscode.WebviewView;
+  public host?: MobilePreviewHost;
+
+  constructor(private readonly context: vscode.ExtensionContext) {}
+
+  public isVisible(): boolean {
+    return this.view?.visible ?? false;
+  }
+
+  resolveWebviewView(webviewView: vscode.WebviewView) {
+    this.view = webviewView;
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'media')]
+    };
+    this.host = new MobilePreviewHost(this.context, (message) => webviewView.webview.postMessage(message));
+    webviewView.webview.html = this.host.getHtml(webviewView.webview);
+    webviewView.webview.onDidReceiveMessage((message) => this.host?.handleMessage(message));
+    webviewView.onDidDispose(() => {
+      this.host?.dispose();
+      this.host = undefined;
+      this.view = undefined;
+    });
+  }
+
+  public dispose() {
+    this.host?.dispose();
+  }
+}
+
+class MobilePreviewPanelManager {
+  public static readonly viewType = 'mobilePreview.panel';
+
+  private panel?: vscode.WebviewPanel;
+  public host?: MobilePreviewHost;
+
+  constructor(private readonly context: vscode.ExtensionContext) {}
+
+  public isActive(): boolean {
+    return this.panel?.active ?? false;
+  }
+
+  public open() {
+    if (this.panel) {
+      this.panel.reveal(vscode.ViewColumn.Beside);
+      return;
+    }
+
+    this.panel = vscode.window.createWebviewPanel(
+      MobilePreviewPanelManager.viewType,
+      'Mobile Preview',
+      vscode.ViewColumn.Beside,
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+        localResourceRoots: [vscode.Uri.joinPath(this.context.extensionUri, 'media')]
+      }
+    );
+    this.panel.iconPath = vscode.Uri.joinPath(this.context.extensionUri, 'media', 'icon.svg');
+    const panel = this.panel;
+    this.host = new MobilePreviewHost(this.context, (message) => panel.webview.postMessage(message));
+
+    this.panel.webview.html = this.host.getHtml(this.panel.webview);
+    this.panel.webview.onDidReceiveMessage((message) => this.host?.handleMessage(message));
+    this.panel.onDidDispose(() => {
+      this.host?.dispose();
+      this.host = undefined;
+      this.panel = undefined;
+    });
+  }
+
+  public dispose() {
+    this.host?.dispose();
+    this.panel?.dispose();
+  }
+}
+
+function buildHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
+  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'main.js'));
+  const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'style.css'));
+  const nonce = getNonce();
+
+  return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -451,7 +529,7 @@ class MobilePreviewPanelManager {
       <input id="width-input" type="number" min="200" max="2000" title="Width (px)" />
       <span class="dim-sep">&times;</span>
       <input id="height-input" type="number" min="200" max="2000" title="Height (px)" />
-      <button id="rotate-btn" title="Rotate device">&#8635;</button>
+      <button id="rotate-btn" title="Rotate device">Rotate</button>
     </div>
     <div class="toolbar-group" id="theme-group">
       <button id="theme-light-btn" title="Light theme" data-scheme="light">&#9728;</button>
@@ -473,13 +551,25 @@ class MobilePreviewPanelManager {
     <div id="preview-wrapper">
       <canvas id="preview-canvas" tabindex="0"></canvas>
     </div>
-    <div id="status-overlay" class="hidden"></div>
+    <div id="status-overlay" class="hidden">
+      <div id="status-card">
+        <div id="status-spinner" class="hidden"></div>
+        <div id="status-icon" class="hidden">
+          <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3.5 2.5 20h19L12 3.5Z" />
+            <line x1="12" y1="9.5" x2="12" y2="14" />
+            <circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none" />
+          </svg>
+        </div>
+        <div id="status-title"></div>
+        <button id="status-retry-btn" class="hidden">Retry</button>
+      </div>
+    </div>
   </div>
   <div id="touch-cursor" class="hidden"></div>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
-  }
 }
 
 function getNonce() {

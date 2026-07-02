@@ -16,6 +16,11 @@
   const previewWrapper = document.getElementById('preview-wrapper');
   const canvas = document.getElementById('preview-canvas');
   const statusOverlay = document.getElementById('status-overlay');
+  const statusCard = document.getElementById('status-card');
+  const statusSpinner = document.getElementById('status-spinner');
+  const statusIcon = document.getElementById('status-icon');
+  const statusTitle = document.getElementById('status-title');
+  const statusRetryBtn = document.getElementById('status-retry-btn');
   const touchCursor = document.getElementById('touch-cursor');
   const ctx = canvas.getContext('2d');
 
@@ -227,15 +232,42 @@
     }
   });
 
-  function showStatus(text) {
-    if (!text) {
-      statusOverlay.classList.add('hidden');
-      statusOverlay.textContent = '';
-    } else {
-      statusOverlay.classList.remove('hidden');
-      statusOverlay.textContent = text;
-    }
+  function hideStatus() {
+    statusOverlay.classList.add('hidden');
+    statusOverlay.classList.remove('is-error');
+    statusCard.title = '';
   }
+
+  function showSimpleStatus(title) {
+    statusOverlay.classList.remove('hidden', 'is-error');
+    statusCard.title = '';
+    statusSpinner.classList.remove('hidden');
+    statusIcon.classList.add('hidden');
+    statusTitle.textContent = title;
+    statusRetryBtn.classList.add('hidden');
+  }
+
+  function friendlyErrorTitle(raw) {
+    const msg = raw || '';
+    if (/ERR_CONNECTION_REFUSED/i.test(msg)) return "Can't connect";
+    if (/ERR_NAME_NOT_RESOLVED|ERR_INTERNET_DISCONNECTED/i.test(msg)) return 'Address not found';
+    if (/ERR_CONNECTION_TIMED_OUT|Timeout \d+ms exceeded/i.test(msg)) return 'Timed out';
+    if (/ERR_SSL|ERR_CERT/i.test(msg)) return 'Certificate error';
+    if (/ERR_EMPTY_RESPONSE/i.test(msg)) return 'Empty response';
+    return "Couldn't load page";
+  }
+
+  function showErrorStatus(rawMessage) {
+    statusOverlay.classList.remove('hidden');
+    statusOverlay.classList.add('is-error');
+    statusSpinner.classList.add('hidden');
+    statusIcon.classList.remove('hidden');
+    statusTitle.textContent = friendlyErrorTitle(rawMessage);
+    statusCard.title = rawMessage || '';
+    statusRetryBtn.classList.remove('hidden');
+  }
+
+  statusRetryBtn.addEventListener('click', () => loadUrl(state.url));
 
   window.addEventListener('message', (event) => {
     const message = event.data;
@@ -271,10 +303,10 @@
         frameImage.src = message.dataUrl;
         break;
       case 'status':
-        if (message.state === 'launching') showStatus('Starting emulated browser…');
-        else if (message.state === 'loading') showStatus('Loading…');
-        else if (message.state === 'error') showStatus(`Failed to load: ${message.message}`);
-        else showStatus(null);
+        if (message.state === 'launching') showSimpleStatus('Starting…');
+        else if (message.state === 'loading') showSimpleStatus('Loading…');
+        else if (message.state === 'error') showErrorStatus(message.message);
+        else hideStatus();
         break;
     }
   });

@@ -40,10 +40,6 @@ body.controls-hidden #toolbar-row1 {
   flex-shrink: 0;
 }
 
-.toolbar-group.zoom-group {
-  margin-left: auto;
-}
-
 .toolbar label {
   opacity: 0.75;
   white-space: nowrap;
@@ -118,7 +114,7 @@ body.controls-hidden #toolbar-row1 {
   flex: 1;
   overflow: auto;
   display: flex;
-  background: color-mix(in srgb, var(--vscode-editor-background), white 20%);
+  background: color-mix(in srgb, var(--vscode-editor-background), white 12%);
 }
 
 #preview-wrapper {
@@ -167,11 +163,95 @@ body.controls-hidden #toolbar-row1 {
   justify-content: center;
   text-align: center;
   padding: 16px;
-  background: rgba(0, 0, 0, 0.55);
+  background: radial-gradient(circle at 50% 42%, rgba(30, 30, 36, 0.75), rgba(8, 8, 11, 0.9));
   color: #fff;
-  pointer-events: none;
 }
 
 #status-overlay.hidden {
+  display: none;
+}
+
+#status-overlay:not(.is-error) {
+  pointer-events: none;
+}
+
+#status-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 85%;
+  animation: mp-fade-in 0.2s ease-out;
+}
+
+@keyframes mp-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+#status-spinner {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent, var(--vscode-focusBorder, #4a9eff));
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  animation: mp-spin 0.8s linear infinite;
+}
+
+@keyframes mp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+#status-icon {
+  color: var(--vscode-errorForeground, #f14c4c);
+  display: flex;
+  animation: mp-pulse 1.6s ease-in-out infinite;
+}
+
+#status-icon.hidden,
+#status-spinner.hidden {
+  display: none;
+}
+
+@keyframes mp-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.12);
+  }
+}
+
+#status-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#status-retry-btn {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  border-radius: 3px;
+  padding: 4px 14px;
+  height: 26px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+#status-retry-btn:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+#status-retry-btn.hidden {
   display: none;
 }

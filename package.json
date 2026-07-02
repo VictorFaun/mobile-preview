@@ -2,7 +2,7 @@
   "name": "mobile-preview",
   "displayName": "Mobile Preview",
   "description": "Live mobile device preview for local dev servers, like Chrome DevTools' device toolbar, opened as an editor tab beside your code.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "VictorFaundez",
   "license": "MIT",
   "repository": {
@@ -20,7 +20,7 @@
     "chrome devtools"
   ],
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.106.0"
   },
   "categories": [
     "Other"
@@ -28,6 +28,38 @@
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "secondarySidebar": [
+        {
+          "id": "mobilePreviewContainer",
+          "title": "Mobile Preview",
+          "icon": "media/icon.svg"
+        }
+      ],
+      "activitybar": [
+        {
+          "id": "mobilePreviewContainerPrimary",
+          "title": "Mobile Preview",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "mobilePreviewContainer": [
+        {
+          "type": "webview",
+          "id": "mobilePreview.view",
+          "name": "Mobile Preview"
+        }
+      ],
+      "mobilePreviewContainerPrimary": [
+        {
+          "type": "webview",
+          "id": "mobilePreview.viewPrimary",
+          "name": "Mobile Preview"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "mobilePreview.open",
@@ -81,6 +113,23 @@
           "when": "activeWebviewPanelId == 'mobilePreview.panel'",
           "group": "navigation@3"
         }
+      ],
+      "view/title": [
+        {
+          "command": "mobilePreview.refresh",
+          "when": "view == mobilePreview.view || view == mobilePreview.viewPrimary",
+          "group": "navigation@1"
+        },
+        {
+          "command": "mobilePreview.screenshot",
+          "when": "view == mobilePreview.view || view == mobilePreview.viewPrimary",
+          "group": "navigation@2"
+        },
+        {
+          "command": "mobilePreview.toggleControls",
+          "when": "view == mobilePreview.view || view == mobilePreview.viewPrimary",
+          "group": "navigation@3"
+        }
       ]
     }
   },
@@ -91,7 +140,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
-    "@types/vscode": "^1.85.0",
+    "@types/vscode": "^1.106.0",
     "typescript": "^5.4.0"
   },
   "dependencies": {
