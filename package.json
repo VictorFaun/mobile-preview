@@ -2,7 +2,7 @@
   "name": "mobile-preview",
   "displayName": "Mobile Preview",
   "description": "Live mobile device preview for local dev servers, like Chrome DevTools' device toolbar, opened as an editor tab beside your code.",
-  "version": "0.0.3",
+  "version": "0.1.0",
   "publisher": "VictorFaundez",
   "license": "MIT",
   "repository": {

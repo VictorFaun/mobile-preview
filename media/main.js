@@ -19,18 +19,24 @@
   const statusCard = document.getElementById('status-card');
   const statusSpinner = document.getElementById('status-spinner');
   const statusIcon = document.getElementById('status-icon');
+  const statusIconEmpty = document.getElementById('status-icon-empty');
   const statusTitle = document.getElementById('status-title');
   const statusRetryBtn = document.getElementById('status-retry-btn');
   const touchCursor = document.getElementById('touch-cursor');
   const consoleBtn = document.getElementById('console-btn');
-  const consoleOverlay = document.getElementById('console-overlay');
+  const consolePanel = document.getElementById('console-panel');
+  const consoleHeader = document.getElementById('console-header');
   const consoleBody = document.getElementById('console-body');
   const consoleCount = document.getElementById('console-count');
   const consoleClearBtn = document.getElementById('console-clear-btn');
   const consoleCloseBtn = document.getElementById('console-close-btn');
+  const settingsBtn = document.getElementById('settings-btn');
+  const settingsPopover = document.getElementById('settings-popover');
+  const reloadBtn = document.getElementById('reload-btn');
+  const screenshotBtn = document.getElementById('screenshot-btn');
   const ctx = canvas.getContext('2d');
 
-  const STAGE_PADDING = 16;
+  const STAGE_PADDING = 28;
 
   let state = {
     url: 'http://localhost:3000',
@@ -98,7 +104,10 @@
   }
 
   function loadUrl(url) {
-    if (!url) return;
+    if (!url || !url.trim()) {
+      showEmptyStatus();
+      return;
+    }
     let normalized = url.trim();
     if (!/^https?:\/\//i.test(normalized)) {
       normalized = 'http://' + normalized;
@@ -134,6 +143,18 @@
     state.orientation = state.orientation === 'portrait' ? 'landscape' : 'portrait';
     sendDeviceChange();
   });
+
+  // --- settings popover ---
+  settingsBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    settingsPopover.classList.toggle('hidden');
+  });
+  settingsPopover.addEventListener('click', (e) => e.stopPropagation());
+  window.addEventListener('click', () => settingsPopover.classList.add('hidden'));
+
+  // --- floating toolbar actions ---
+  reloadBtn.addEventListener('click', () => vscode.postMessage({ type: 'refresh' }));
+  screenshotBtn.addEventListener('click', () => vscode.postMessage({ type: 'screenshot' }));
 
   themeButtons.forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -249,7 +270,18 @@
     statusCard.title = '';
     statusSpinner.classList.remove('hidden');
     statusIcon.classList.add('hidden');
+    statusIconEmpty.classList.add('hidden');
     statusTitle.textContent = title;
+    statusRetryBtn.classList.add('hidden');
+  }
+
+  function showEmptyStatus() {
+    statusOverlay.classList.remove('hidden', 'is-error');
+    statusCard.title = '';
+    statusSpinner.classList.add('hidden');
+    statusIcon.classList.add('hidden');
+    statusIconEmpty.classList.remove('hidden');
+    statusTitle.textContent = 'Enter a URL to get started';
     statusRetryBtn.classList.add('hidden');
   }
 
@@ -267,6 +299,7 @@
     statusOverlay.classList.remove('hidden');
     statusOverlay.classList.add('is-error');
     statusSpinner.classList.add('hidden');
+    statusIconEmpty.classList.add('hidden');
     statusIcon.classList.remove('hidden');
     statusTitle.textContent = friendlyErrorTitle(rawMessage);
     statusCard.title = rawMessage || '';
@@ -285,14 +318,23 @@
     stickToBottom = consoleBody.scrollHeight - consoleBody.scrollTop - consoleBody.clientHeight < 24;
   });
 
-  consoleBtn.addEventListener('click', () => {
-    consoleOverlay.classList.toggle('hidden');
-    if (!consoleOverlay.classList.contains('hidden') && stickToBottom) {
+  function setConsoleExpanded(expanded) {
+    consolePanel.classList.toggle('expanded', expanded);
+    if (expanded && stickToBottom) {
       consoleBody.scrollTop = consoleBody.scrollHeight;
     }
+  }
+
+  consoleBtn.addEventListener('click', () => setConsoleExpanded(!consolePanel.classList.contains('expanded')));
+  consoleHeader.addEventListener('click', () => setConsoleExpanded(!consolePanel.classList.contains('expanded')));
+  consoleCloseBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setConsoleExpanded(false);
   });
-  consoleCloseBtn.addEventListener('click', () => consoleOverlay.classList.add('hidden'));
-  consoleClearBtn.addEventListener('click', () => clearConsole());
+  consoleClearBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    clearConsole();
+  });
 
   function clearConsole() {
     consoleBody.innerHTML = '';

@@ -460,6 +460,12 @@ class MobilePreviewHost {
         updateState(this.context, { url: message.url });
         await this.session.loadUrl(message.url);
         break;
+      case 'refresh':
+        await this.session.refresh();
+        break;
+      case 'screenshot':
+        await this.takeScreenshot();
+        break;
       case 'touch':
         await this.session.dispatchTouch(message.kind, message.x, message.y);
         break;
@@ -600,6 +606,42 @@ class MobilePreviewPanelManager {
   }
 }
 
+const ICONS = {
+  rotate:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>',
+  gear:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  sun:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>',
+  moon:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
+  monitor:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
+  globe:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><path d="M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z"/></svg>',
+  arrowRight:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="12" x2="20" y2="12"/><polyline points="14 6 20 12 14 18"/></svg>',
+  refresh:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7"/><polyline points="21 3 21 9 15 9"/></svg>',
+  camera:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>',
+  terminal:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
+  trash:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+  close:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+  minus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  plus:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  fit:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3m11-5v3a2 2 0 0 1-2 2h-3"/></svg>',
+  warning:
+    '<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5 2.5 20h19L12 3.5Z"/><line x1="12" y1="9.5" x2="12" y2="14"/><circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none"/></svg>',
+  empty:
+    '<svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><path d="M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18z"/></svg>'
+};
+
 function buildHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'main.js'));
   const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'style.css'));
@@ -614,64 +656,77 @@ function buildHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   <title>Mobile Preview</title>
 </head>
 <body class="controls-hidden">
-  <div id="toolbar-row1" class="toolbar">
-    <div class="toolbar-group">
-      <label for="device-select">Device</label>
+  <div id="topbar">
+    <div class="tb-group">
       <select id="device-select"></select>
     </div>
-    <div class="toolbar-group">
+    <div class="tb-group" id="dims-group">
       <input id="width-input" type="number" min="200" max="2000" title="Width (px)" />
       <span class="dim-sep">&times;</span>
       <input id="height-input" type="number" min="200" max="2000" title="Height (px)" />
-      <button id="rotate-btn" title="Rotate device">Rotate</button>
     </div>
-    <div class="toolbar-group" id="theme-group">
-      <button id="theme-light-btn" title="Light theme" data-scheme="light">&#9728;</button>
-      <button id="theme-dark-btn" title="Dark theme" data-scheme="dark">&#9789;</button>
-      <button id="theme-device-btn" title="Match VS Code theme" data-scheme="device">&#9682;</button>
-    </div>
-    <div class="toolbar-group zoom-group">
-      <button id="fit-btn" title="Auto zoom to fit">Fit</button>
-      <button id="zoom-out-btn" title="Zoom out">&minus;</button>
-      <span id="zoom-label">100%</span>
-      <button id="zoom-in-btn" title="Zoom in">+</button>
+    <button id="rotate-btn" class="icon-btn" title="Rotate device">${ICONS.rotate}</button>
+    <div class="tb-spacer"></div>
+    <div class="popover-anchor">
+      <button id="settings-btn" class="icon-btn" title="Settings">${ICONS.gear}</button>
+      <div id="settings-popover" class="popover hidden">
+        <div class="popover-section">
+          <span class="popover-label">Theme</span>
+          <div class="segmented" id="theme-group">
+            <button data-scheme="light" title="Light theme">${ICONS.sun}</button>
+            <button data-scheme="dark" title="Dark theme">${ICONS.moon}</button>
+            <button data-scheme="device" title="Match VS Code theme">${ICONS.monitor}</button>
+          </div>
+        </div>
+        <div class="popover-section">
+          <span class="popover-label">Zoom</span>
+          <div class="segmented">
+            <button id="zoom-out-btn" title="Zoom out">${ICONS.minus}</button>
+            <span id="zoom-label">100%</span>
+            <button id="zoom-in-btn" title="Zoom in">${ICONS.plus}</button>
+            <button id="fit-btn" title="Auto zoom to fit">${ICONS.fit}</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
-  <div id="toolbar-row2" class="toolbar">
-    <input id="url-input" type="text" placeholder="http://localhost:3000" />
-    <button id="go-btn" title="Load URL">Go</button>
-    <button id="console-btn" title="Toggle console">Console</button>
+  <div id="addressbar">
+    <div id="addressbar-pill">
+      <span class="addr-icon">${ICONS.globe}</span>
+      <input id="url-input" type="text" placeholder="http://localhost:3000" />
+      <button id="go-btn" class="icon-btn" title="Load URL">${ICONS.arrowRight}</button>
+    </div>
   </div>
   <div id="stage">
     <div id="preview-wrapper">
       <canvas id="preview-canvas" tabindex="0"></canvas>
     </div>
+    <div id="floating-toolbar">
+      <button id="reload-btn" class="icon-btn" title="Reload">${ICONS.refresh}</button>
+      <button id="screenshot-btn" class="icon-btn" title="Take screenshot">${ICONS.camera}</button>
+      <button id="console-btn" class="icon-btn" title="Toggle console">${ICONS.terminal}</button>
+    </div>
     <div id="status-overlay" class="hidden">
       <div id="status-card">
         <div id="status-spinner" class="hidden"></div>
-        <div id="status-icon" class="hidden">
-          <svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 3.5 2.5 20h19L12 3.5Z" />
-            <line x1="12" y1="9.5" x2="12" y2="14" />
-            <circle cx="12" cy="17" r="0.9" fill="currentColor" stroke="none" />
-          </svg>
-        </div>
+        <div id="status-icon" class="hidden">${ICONS.warning}</div>
+        <div id="status-icon-empty" class="hidden">${ICONS.empty}</div>
         <div id="status-title"></div>
         <button id="status-retry-btn" class="hidden">Retry</button>
       </div>
     </div>
+    <div id="console-panel">
+      <div id="console-header">
+        <span id="console-title">Console</span>
+        <span id="console-count">0</span>
+        <span class="flex-spacer"></span>
+        <button id="console-clear-btn" class="icon-btn" title="Clear console">${ICONS.trash}</button>
+        <button id="console-close-btn" class="icon-btn" title="Collapse console">${ICONS.close}</button>
+      </div>
+      <div id="console-body"></div>
+    </div>
   </div>
   <div id="touch-cursor" class="hidden"></div>
-  <div id="console-overlay" class="hidden">
-    <div id="console-header">
-      <span id="console-title">Console</span>
-      <span id="console-count">0</span>
-      <span class="flex-spacer"></span>
-      <button id="console-clear-btn" title="Clear console">Clear</button>
-      <button id="console-close-btn" title="Close console">&times;</button>
-    </div>
-    <div id="console-body"></div>
-  </div>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

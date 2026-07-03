@@ -1,5 +1,19 @@
 :root {
-  color-scheme: light dark;
+  color-scheme: dark;
+  --mp-bg: #161616;
+  --mp-panel: #1f1f1f;
+  --mp-card: #252526;
+  --mp-border: #333333;
+  --mp-primary: #4f8cff;
+  --mp-success: #2ecc71;
+  --mp-warning: #f4b400;
+  --mp-error: #ff5d5d;
+  --mp-text: #ffffff;
+  --mp-text-secondary: #a0a0a0;
+  --mp-radius-sm: 8px;
+  --mp-radius-md: 12px;
+  --mp-radius-lg: 18px;
+  --mp-ease: cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 
 * {
@@ -9,30 +23,115 @@
 body {
   margin: 0;
   padding: 0;
-  font-family: var(--vscode-font-family, sans-serif);
-  font-size: 12px;
-  color: var(--vscode-foreground);
-  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+  font-family: var(--vscode-font-family, -apple-system, 'Segoe UI', sans-serif);
+  font-size: 12.5px;
+  color: var(--mp-text);
+  background: var(--mp-bg);
   height: 100vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 6px;
-  border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.3));
-  flex-wrap: wrap;
+button {
+  font-family: inherit;
 }
 
-body.controls-hidden #toolbar-row1 {
+/* ---------- shared icon-button primitive ---------- */
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--mp-radius-sm);
+  background: transparent;
+  color: var(--mp-text-secondary);
+  cursor: pointer;
+  transition: background 0.15s var(--mp-ease), color 0.15s var(--mp-ease), transform 0.1s var(--mp-ease);
+}
+
+.icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.icon-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--mp-text);
+}
+
+.icon-btn:active {
+  transform: scale(0.92);
+}
+
+.icon-btn.active {
+  background: color-mix(in srgb, var(--mp-primary), transparent 78%);
+  color: var(--mp-primary);
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+
+.text-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--mp-radius-sm);
+  background: var(--mp-card);
+  color: var(--mp-text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s var(--mp-ease), transform 0.1s var(--mp-ease);
+}
+
+.text-btn:hover {
+  background: color-mix(in srgb, var(--mp-card), white 8%);
+}
+
+.text-btn:active {
+  transform: scale(0.96);
+}
+
+.text-btn.primary {
+  background: var(--mp-primary);
+  color: #fff;
+}
+
+.text-btn.primary:hover {
+  background: color-mix(in srgb, var(--mp-primary), white 10%);
+}
+
+/* ---------- top bar ---------- */
+
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--mp-panel);
+  border-bottom: 1px solid var(--mp-border);
+  flex: none;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+body.controls-hidden #topbar,
+body.controls-hidden #addressbar,
+body.controls-hidden #floating-toolbar {
   display: none;
 }
 
-.toolbar-group {
+.tb-group {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -40,81 +139,251 @@ body.controls-hidden #toolbar-row1 {
   flex-shrink: 0;
 }
 
-.toolbar label {
-  opacity: 0.75;
-  white-space: nowrap;
-}
-
-.toolbar select,
-.toolbar input[type='number'],
-.toolbar input[type='text'] {
-  background: var(--vscode-input-background);
-  color: var(--vscode-input-foreground);
-  border: 1px solid var(--vscode-input-border, transparent);
-  border-radius: 3px;
-  padding: 2px 4px;
-  font-size: 12px;
-}
-
 #device-select {
-  max-width: 140px;
+  background: var(--mp-card);
+  color: var(--mp-text);
+  border: 1px solid var(--mp-border);
+  border-radius: var(--mp-radius-sm);
+  padding: 5px 8px;
+  font-size: 12px;
+  max-width: 150px;
+  transition: border-color 0.15s var(--mp-ease);
+}
+
+#device-select:hover {
+  border-color: color-mix(in srgb, var(--mp-border), white 25%);
+}
+
+#device-select:focus {
+  outline: none;
+  border-color: var(--mp-primary);
+}
+
+#dims-group {
+  gap: 2px;
+  color: var(--mp-text-secondary);
+  font-size: 11px;
 }
 
 #width-input,
 #height-input {
-  width: 56px;
+  width: 46px;
+  background: transparent;
+  color: var(--mp-text-secondary);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 4px;
+  font-size: 11px;
+  text-align: center;
+  transition: background 0.15s var(--mp-ease), border-color 0.15s var(--mp-ease);
+}
+
+#width-input:not(:disabled),
+#height-input:not(:disabled) {
+  color: var(--mp-text);
+  background: var(--mp-card);
+  border-color: var(--mp-border);
+}
+
+#width-input:not(:disabled):focus,
+#height-input:not(:disabled):focus {
+  outline: none;
+  border-color: var(--mp-primary);
+}
+
+#width-input:disabled,
+#height-input:disabled {
+  cursor: default;
+}
+
+.dim-sep {
+  color: var(--mp-text-secondary);
+  font-size: 11px;
+}
+
+.tb-spacer {
+  flex: 1;
+}
+
+/* ---------- settings popover ---------- */
+
+.popover-anchor {
+  position: relative;
+}
+
+.popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  min-width: 220px;
+  background: var(--mp-card);
+  border: 1px solid var(--mp-border);
+  border-radius: var(--mp-radius-md);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: mp-pop-in 0.16s var(--mp-ease);
+}
+
+.popover.hidden {
+  display: none;
+}
+
+@keyframes mp-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.popover-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.popover-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--mp-text-secondary);
+  font-weight: 600;
+}
+
+.segmented {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: var(--mp-panel);
+  border: 1px solid var(--mp-border);
+  border-radius: var(--mp-radius-sm);
+  padding: 2px;
+}
+
+.segmented button {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--mp-text-secondary);
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s var(--mp-ease), color 0.15s var(--mp-ease);
+}
+
+.segmented button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.segmented button:hover {
+  color: var(--mp-text);
+}
+
+.segmented button.active {
+  background: var(--mp-primary);
+  color: #fff;
+}
+
+#zoom-label {
+  min-width: 38px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--mp-text-secondary);
+  flex: none;
+}
+
+/* ---------- address bar ---------- */
+
+#addressbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--mp-panel);
+  border-bottom: 1px solid var(--mp-border);
+  flex: none;
+}
+
+#addressbar-pill {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 6px 0 10px;
+  background: var(--mp-card);
+  border: 1px solid var(--mp-border);
+  border-radius: 999px;
+  transition: border-color 0.15s var(--mp-ease);
+}
+
+#addressbar-pill:focus-within {
+  border-color: var(--mp-primary);
+}
+
+.addr-icon {
+  display: flex;
+  color: var(--mp-text-secondary);
+  flex: none;
+}
+
+.addr-icon svg {
+  width: 14px;
+  height: 14px;
 }
 
 #url-input {
   flex: 1;
-  min-width: 80px;
+  min-width: 60px;
+  background: transparent;
+  border: none;
+  color: var(--mp-text);
+  font-size: 12.5px;
+  height: 100%;
 }
 
-.toolbar button {
-  background: var(--vscode-button-secondaryBackground, transparent);
-  color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
-  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.4));
-  border-radius: 3px;
-  cursor: pointer;
-  min-width: 24px;
-  height: 24px;
-  line-height: 1;
-  padding: 0 6px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+#url-input:focus {
+  outline: none;
 }
 
-.toolbar button:hover {
-  background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.2));
+#url-input::placeholder {
+  color: var(--mp-text-secondary);
 }
 
-.toolbar button.active {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-  border-color: var(--vscode-button-background);
-}
-
+/* Sized to fit the address bar pill, otherwise identical to every other .icon-btn */
 #go-btn {
-  padding: 0 8px;
+  width: 24px;
+  height: 24px;
+  flex: none;
 }
 
-.dim-sep {
-  opacity: 0.6;
+#go-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
-#zoom-label {
-  min-width: 34px;
-  text-align: center;
-  opacity: 0.85;
-}
+/* ---------- stage / preview ---------- */
 
 #stage {
   position: relative;
   flex: 1;
   overflow: auto;
   display: flex;
-  background: color-mix(in srgb, var(--vscode-editor-background), white 12%);
+  background: radial-gradient(ellipse at 50% 20%, #1c1c1e 0%, var(--mp-bg) 70%);
 }
 
 #preview-wrapper {
@@ -122,13 +391,19 @@ body.controls-hidden #toolbar-row1 {
   margin: auto;
 }
 
+/* The shadow/radius live on the canvas itself (not a padded wrapper) so they
+   never throw off the exact scaled pixel sizing the zoom math depends on —
+   box-shadow paints outside the box without occupying layout space. */
 #preview-canvas {
   display: block;
   background: #fff;
   border: none;
+  border-radius: 20px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08);
   transform-origin: top left;
   outline: none;
   cursor: none;
+  transition: box-shadow 0.2s var(--mp-ease);
 }
 
 #touch-cursor {
@@ -139,7 +414,7 @@ body.controls-hidden #toolbar-row1 {
   margin-top: -10px;
   border-radius: 50%;
   border: 2px solid rgba(255, 255, 255, 0.9);
-  background: rgba(90, 155, 255, 0.35);
+  background: rgba(79, 140, 255, 0.35);
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
   pointer-events: none;
   z-index: 10;
@@ -147,13 +422,46 @@ body.controls-hidden #toolbar-row1 {
 }
 
 #touch-cursor.pressed {
-  background: rgba(90, 155, 255, 0.6);
+  background: rgba(79, 140, 255, 0.6);
   transform: scale(1.3);
 }
 
 #touch-cursor.hidden {
   display: none;
 }
+
+/* ---------- floating vertical toolbar ---------- */
+
+#floating-toolbar {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  transform: translateY(-50%);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: color-mix(in srgb, var(--mp-panel), transparent 25%);
+  border: 1px solid var(--mp-border);
+  border-radius: var(--mp-radius-lg);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+#floating-toolbar .icon-btn {
+  width: 32px;
+  height: 32px;
+  color: var(--mp-text-secondary);
+}
+
+#floating-toolbar .icon-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--mp-text);
+}
+
+/* ---------- status overlay (loading / error / empty) ---------- */
 
 #status-overlay {
   position: absolute;
@@ -163,8 +471,9 @@ body.controls-hidden #toolbar-row1 {
   justify-content: center;
   text-align: center;
   padding: 16px;
-  background: radial-gradient(circle at 50% 42%, rgba(30, 30, 36, 0.75), rgba(8, 8, 11, 0.9));
-  color: #fff;
+  background: color-mix(in srgb, var(--mp-bg), transparent 8%);
+  color: var(--mp-text);
+  z-index: 5;
 }
 
 #status-overlay.hidden {
@@ -179,15 +488,15 @@ body.controls-hidden #toolbar-row1 {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   max-width: 85%;
-  animation: mp-fade-in 0.2s ease-out;
+  animation: mp-fade-in 0.2s var(--mp-ease);
 }
 
 @keyframes mp-fade-in {
   from {
     opacity: 0;
-    transform: scale(0.9);
+    transform: scale(0.92);
   }
   to {
     opacity: 1;
@@ -199,7 +508,7 @@ body.controls-hidden #toolbar-row1 {
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  background: conic-gradient(from 0deg, transparent, var(--vscode-focusBorder, #4a9eff));
+  background: conic-gradient(from 0deg, transparent, var(--mp-primary));
   -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
   mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
   animation: mp-spin 0.8s linear infinite;
@@ -212,12 +521,18 @@ body.controls-hidden #toolbar-row1 {
 }
 
 #status-icon {
-  color: var(--vscode-errorForeground, #f14c4c);
+  color: var(--mp-error);
   display: flex;
   animation: mp-pulse 1.6s ease-in-out infinite;
 }
 
+#status-icon-empty {
+  color: var(--mp-text-secondary);
+  display: flex;
+}
+
 #status-icon.hidden,
+#status-icon-empty.hidden,
 #status-spinner.hidden {
   display: none;
 }
@@ -233,96 +548,96 @@ body.controls-hidden #toolbar-row1 {
 }
 
 #status-title {
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 600;
 }
 
 #status-retry-btn {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
+  background: var(--mp-primary);
+  color: #fff;
   border: none;
-  border-radius: 3px;
-  padding: 4px 14px;
-  height: 26px;
+  border-radius: var(--mp-radius-sm);
+  padding: 5px 16px;
+  height: 28px;
   cursor: pointer;
   font-size: 12px;
+  transition: background 0.15s var(--mp-ease), transform 0.1s var(--mp-ease);
 }
 
 #status-retry-btn:hover {
-  background: var(--vscode-button-hoverBackground);
+  background: color-mix(in srgb, var(--mp-primary), white 10%);
+}
+
+#status-retry-btn:active {
+  transform: scale(0.96);
 }
 
 #status-retry-btn.hidden {
   display: none;
 }
 
-/* Console */
+/* ---------- console (bottom sliding panel) ---------- */
 
 .flex-spacer {
   flex: 1;
 }
 
-#console-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
+#console-panel {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  z-index: 30;
   display: flex;
   flex-direction: column;
-  background: var(--vscode-editor-background);
-  color: var(--vscode-editor-foreground);
-  animation: mp-fade-in 0.15s ease-out;
+  height: 0;
+  max-height: calc(100% - 16px);
+  background: color-mix(in srgb, var(--mp-panel), transparent 4%);
+  border: 1px solid transparent;
+  border-radius: var(--mp-radius-md);
+  box-shadow: none;
+  opacity: 0;
+  overflow: hidden;
+  transition: height 0.2s var(--mp-ease), opacity 0.15s var(--mp-ease), border-color 0.2s var(--mp-ease), box-shadow 0.2s var(--mp-ease);
 }
 
-#console-overlay.hidden {
-  display: none;
+#console-panel.expanded {
+  height: 46%;
+  opacity: 1;
+  border-color: var(--mp-border);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
 }
 
 #console-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.3));
-  font-size: 12px;
+  padding: 0 8px;
+  height: 34px;
   flex: none;
+  cursor: pointer;
+  user-select: none;
 }
 
 #console-title {
   font-weight: 600;
+  font-size: 12px;
 }
 
 #console-count {
-  background: var(--vscode-badge-background);
-  color: var(--vscode-badge-foreground);
+  background: var(--mp-card);
+  color: var(--mp-text-secondary);
   border-radius: 10px;
-  padding: 0 6px;
-  font-size: 11px;
+  padding: 1px 7px;
+  font-size: 10.5px;
   min-width: 16px;
   text-align: center;
 }
 
 #console-clear-btn,
 #console-close-btn {
-  background: transparent;
-  color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.4));
-  border-radius: 3px;
-  cursor: pointer;
-  height: 22px;
-  padding: 0 8px;
-  font-size: 12px;
-}
-
-#console-close-btn {
-  width: 22px;
-  padding: 0;
-  font-size: 14px;
-  line-height: 1;
-}
-
-#console-clear-btn:hover,
-#console-close-btn:hover {
-  background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.2));
+  width: 24px;
+  height: 24px;
 }
 
 #console-body {
@@ -330,44 +645,43 @@ body.controls-hidden #toolbar-row1 {
   overflow: auto;
   font-family: var(--vscode-editor-font-family, Consolas, monospace);
   font-size: 12px;
+  border-top: 1px solid var(--mp-border);
 }
 
-#console-empty {
-  padding: 16px;
-  opacity: 0.6;
-  font-style: italic;
+#console-panel:not(.expanded) #console-body {
+  display: none;
 }
 
 .console-entry {
   display: flex;
   gap: 8px;
-  padding: 4px 10px;
-  border-bottom: 1px solid rgba(128, 128, 128, 0.12);
+  padding: 5px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   border-left: 3px solid transparent;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .console-entry:hover {
-  background: rgba(128, 128, 128, 0.08);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .console-entry.level-error {
-  border-left-color: var(--vscode-errorForeground, #f14c4c);
-  background: rgba(241, 76, 76, 0.07);
+  border-left-color: var(--mp-error);
+  background: color-mix(in srgb, var(--mp-error), transparent 92%);
 }
 
 .console-entry.level-warning {
-  border-left-color: #cca700;
-  background: rgba(204, 167, 0, 0.07);
+  border-left-color: var(--mp-warning);
+  background: color-mix(in srgb, var(--mp-warning), transparent 92%);
 }
 
 .console-entry.level-info {
-  border-left-color: #3794ff;
+  border-left-color: var(--mp-primary);
 }
 
 .console-time {
-  color: var(--vscode-descriptionForeground);
+  color: var(--mp-text-secondary);
   font-size: 10px;
   flex: none;
   padding-top: 2px;
@@ -381,27 +695,27 @@ body.controls-hidden #toolbar-row1 {
 
 .console-stack {
   margin-top: 4px;
-  color: var(--vscode-descriptionForeground);
+  color: var(--mp-text-secondary);
   font-size: 11px;
   white-space: pre-wrap;
 }
 
 .v-string {
-  color: #ce9178;
+  color: #a8d8a0;
 }
 
 .v-number {
-  color: #4fc1ff;
+  color: #6db8ff;
 }
 
 .v-null,
 .v-undefined {
-  color: var(--vscode-descriptionForeground);
+  color: var(--mp-text-secondary);
   font-style: italic;
 }
 
 .v-function {
-  color: #dcdcaa;
+  color: var(--mp-warning);
   font-style: italic;
 }
 
@@ -410,20 +724,20 @@ body.controls-hidden #toolbar-row1 {
 }
 
 .v-punct {
-  color: var(--vscode-descriptionForeground);
+  color: var(--mp-text-secondary);
 }
 
 .console-obj-toggle {
   cursor: pointer;
   user-select: none;
-  color: var(--vscode-descriptionForeground);
+  color: var(--mp-text-secondary);
   display: inline-block;
   width: 12px;
 }
 
 .console-obj-children {
   margin-left: 14px;
-  border-left: 1px dotted rgba(128, 128, 128, 0.3);
+  border-left: 1px dotted var(--mp-border);
   padding-left: 8px;
 }
 
