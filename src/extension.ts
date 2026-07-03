@@ -166,6 +166,50 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {}
 
+interface ConsoleArgSummary {
+  kind: 'primitive' | 'function' | 'object';
+  type?: string;
+  text?: string;
+  subtype?: string;
+  description?: string;
+  objectId?: string;
+  preview?: { overflow: boolean; properties: { name: string; type: string; value?: string }[] };
+}
+
+function summarizeRemoteObject(obj: any): ConsoleArgSummary {
+  if (!obj || obj.type === 'undefined') return { kind: 'primitive', type: 'undefined', text: 'undefined' };
+  if (obj.subtype === 'null') return { kind: 'primitive', type: 'null', text: 'null' };
+  if (obj.type === 'string') return { kind: 'primitive', type: 'string', text: obj.value };
+  if (obj.type === 'number' || obj.type === 'boolean') return { kind: 'primitive', type: obj.type, text: String(obj.value) };
+  if (obj.type === 'bigint') return { kind: 'primitive', type: 'bigint', text: `${obj.unserializableValue || obj.description || '0'}n` };
+  if (obj.type === 'symbol') return { kind: 'primitive', type: 'symbol', text: obj.description || 'Symbol()' };
+  if (obj.type === 'function') {
+    return { kind: 'function', text: obj.description ? obj.description.split('\n')[0] : 'ƒ ()' };
+  }
+  return {
+    kind: 'object',
+    subtype: obj.subtype,
+    description: obj.description,
+    objectId: obj.objectId,
+    preview: obj.preview
+      ? {
+          overflow: !!obj.preview.overflow,
+          properties: (obj.preview.properties || []).map((p: any) => ({ name: p.name, type: p.type, value: p.value }))
+        }
+      : undefined
+  };
+}
+
+function formatStackTrace(details: any): string | undefined {
+  const frames = details?.stackTrace?.callFrames;
+  if (!frames || !frames.length) return undefined;
+  return frames
+    .map((f: any) => `    at ${f.functionName || '<anonymous>'} (${f.url || 'unknown'}:${f.lineNumber + 1}:${f.columnNumber + 1})`)
+    .join('\n');
+}
+
+let consoleEntrySeq = 0;
+
 class BrowserSession {
   private browser?: Browser;
   private context?: BrowserContext;
@@ -219,6 +263,33 @@ class BrowserSession {
       everyNthFrame: 1
     });
 
+    await this.cdp.send('Runtime.enable').catch(() => {});
+    this.cdp.on('Runtime.consoleAPICalled', (e: any) => {
+      this.postMessage({
+        type: 'console',
+        entry: {
+          id: ++consoleEntrySeq,
+          level: e.type,
+          timestamp: e.timestamp,
+          args: (e.args || []).map(summarizeRemoteObject)
+        }
+      });
+    });
+    this.cdp.on('Runtime.exceptionThrown', (e: any) => {
+      const details = e.exceptionDetails;
+      const message = details?.exception?.description || details?.text || 'Uncaught exception';
+      this.postMessage({
+        type: 'console',
+        entry: {
+          id: ++consoleEntrySeq,
+          level: 'error',
+          timestamp: e.timestamp,
+          args: [{ kind: 'primitive', type: 'string', text: message }],
+          stack: formatStackTrace(details)
+        }
+      });
+    });
+
     this.postMessage({ type: 'viewport', width: spec.width, height: spec.height });
 
     if (this.pendingUrl) {
@@ -229,6 +300,7 @@ class BrowserSession {
   async loadUrl(url: string) {
     this.pendingUrl = url;
     if (!this.page) return;
+    this.postMessage({ type: 'consoleClear' });
     this.postMessage({ type: 'status', state: 'loading' });
     try {
       await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
@@ -240,7 +312,24 @@ class BrowserSession {
 
   async refresh() {
     if (!this.page) return;
+    this.postMessage({ type: 'consoleClear' });
     await this.page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+  }
+
+  async getProperties(objectId: string): Promise<(ConsoleArgSummary & { name: string })[]> {
+    if (!this.cdp) return [];
+    try {
+      const result: any = await this.cdp.send('Runtime.getProperties', {
+        objectId,
+        ownProperties: true,
+        generatePreview: true
+      });
+      return (result.result || [])
+        .filter((p: any) => p.enumerable !== false && p.name !== '__proto__' && p.value)
+        .map((p: any) => ({ name: p.name, ...summarizeRemoteObject(p.value) }));
+    } catch {
+      return [];
+    }
   }
 
   async dispatchTouch(kind: 'start' | 'move' | 'end', x: number, y: number) {
@@ -383,6 +472,11 @@ class MobilePreviewHost {
       case 'key':
         await this.session.dispatchKey(message.key);
         break;
+      case 'consoleGetProperties': {
+        const properties = await this.session.getProperties(message.objectId);
+        this.postMessage({ type: 'consoleProperties', requestId: message.requestId, properties });
+        break;
+      }
       case 'saveState':
         updateState(this.context, message.state ?? {});
         break;
@@ -546,6 +640,7 @@ function buildHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   <div id="toolbar-row2" class="toolbar">
     <input id="url-input" type="text" placeholder="http://localhost:3000" />
     <button id="go-btn" title="Load URL">Go</button>
+    <button id="console-btn" title="Toggle console">Console</button>
   </div>
   <div id="stage">
     <div id="preview-wrapper">
@@ -567,6 +662,16 @@ function buildHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
     </div>
   </div>
   <div id="touch-cursor" class="hidden"></div>
+  <div id="console-overlay" class="hidden">
+    <div id="console-header">
+      <span id="console-title">Console</span>
+      <span id="console-count">0</span>
+      <span class="flex-spacer"></span>
+      <button id="console-clear-btn" title="Clear console">Clear</button>
+      <button id="console-close-btn" title="Close console">&times;</button>
+    </div>
+    <div id="console-body"></div>
+  </div>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

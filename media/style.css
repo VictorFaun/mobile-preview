@@ -255,3 +255,178 @@ body.controls-hidden #toolbar-row1 {
 #status-retry-btn.hidden {
   display: none;
 }
+
+/* Console */
+
+.flex-spacer {
+  flex: 1;
+}
+
+#console-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  animation: mp-fade-in 0.15s ease-out;
+}
+
+#console-overlay.hidden {
+  display: none;
+}
+
+#console-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.3));
+  font-size: 12px;
+  flex: none;
+}
+
+#console-title {
+  font-weight: 600;
+}
+
+#console-count {
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
+  border-radius: 10px;
+  padding: 0 6px;
+  font-size: 11px;
+  min-width: 16px;
+  text-align: center;
+}
+
+#console-clear-btn,
+#console-close-btn {
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.4));
+  border-radius: 3px;
+  cursor: pointer;
+  height: 22px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+#console-close-btn {
+  width: 22px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+}
+
+#console-clear-btn:hover,
+#console-close-btn:hover {
+  background: var(--vscode-button-secondaryHoverBackground, rgba(128, 128, 128, 0.2));
+}
+
+#console-body {
+  flex: 1;
+  overflow: auto;
+  font-family: var(--vscode-editor-font-family, Consolas, monospace);
+  font-size: 12px;
+}
+
+#console-empty {
+  padding: 16px;
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.console-entry {
+  display: flex;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid rgba(128, 128, 128, 0.12);
+  border-left: 3px solid transparent;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.console-entry:hover {
+  background: rgba(128, 128, 128, 0.08);
+}
+
+.console-entry.level-error {
+  border-left-color: var(--vscode-errorForeground, #f14c4c);
+  background: rgba(241, 76, 76, 0.07);
+}
+
+.console-entry.level-warning {
+  border-left-color: #cca700;
+  background: rgba(204, 167, 0, 0.07);
+}
+
+.console-entry.level-info {
+  border-left-color: #3794ff;
+}
+
+.console-time {
+  color: var(--vscode-descriptionForeground);
+  font-size: 10px;
+  flex: none;
+  padding-top: 2px;
+  white-space: nowrap;
+}
+
+.console-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.console-stack {
+  margin-top: 4px;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+.v-string {
+  color: #ce9178;
+}
+
+.v-number {
+  color: #4fc1ff;
+}
+
+.v-null,
+.v-undefined {
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+
+.v-function {
+  color: #dcdcaa;
+  font-style: italic;
+}
+
+.v-key {
+  color: #9cdcfe;
+}
+
+.v-punct {
+  color: var(--vscode-descriptionForeground);
+}
+
+.console-obj-toggle {
+  cursor: pointer;
+  user-select: none;
+  color: var(--vscode-descriptionForeground);
+  display: inline-block;
+  width: 12px;
+}
+
+.console-obj-children {
+  margin-left: 14px;
+  border-left: 1px dotted rgba(128, 128, 128, 0.3);
+  padding-left: 8px;
+}
+
+.console-obj-children.hidden {
+  display: none;
+}

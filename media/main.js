@@ -22,6 +22,12 @@
   const statusTitle = document.getElementById('status-title');
   const statusRetryBtn = document.getElementById('status-retry-btn');
   const touchCursor = document.getElementById('touch-cursor');
+  const consoleBtn = document.getElementById('console-btn');
+  const consoleOverlay = document.getElementById('console-overlay');
+  const consoleBody = document.getElementById('console-body');
+  const consoleCount = document.getElementById('console-count');
+  const consoleClearBtn = document.getElementById('console-clear-btn');
+  const consoleCloseBtn = document.getElementById('console-close-btn');
   const ctx = canvas.getContext('2d');
 
   const STAGE_PADDING = 16;
@@ -269,6 +275,154 @@
 
   statusRetryBtn.addEventListener('click', () => loadUrl(state.url));
 
+  // --- console ---
+  let consoleEntryCount = 0;
+  let consoleRequestSeq = 0;
+  const pendingPropertyRequests = new Map();
+  let stickToBottom = true;
+
+  consoleBody.addEventListener('scroll', () => {
+    stickToBottom = consoleBody.scrollHeight - consoleBody.scrollTop - consoleBody.clientHeight < 24;
+  });
+
+  consoleBtn.addEventListener('click', () => {
+    consoleOverlay.classList.toggle('hidden');
+    if (!consoleOverlay.classList.contains('hidden') && stickToBottom) {
+      consoleBody.scrollTop = consoleBody.scrollHeight;
+    }
+  });
+  consoleCloseBtn.addEventListener('click', () => consoleOverlay.classList.add('hidden'));
+  consoleClearBtn.addEventListener('click', () => clearConsole());
+
+  function clearConsole() {
+    consoleBody.innerHTML = '';
+    consoleEntryCount = 0;
+    consoleCount.textContent = '0';
+  }
+
+  function requestProperties(objectId, callback) {
+    const requestId = ++consoleRequestSeq;
+    pendingPropertyRequests.set(requestId, callback);
+    vscode.postMessage({ type: 'consoleGetProperties', requestId, objectId });
+  }
+
+  function previewText(arg) {
+    const isArray = arg.subtype === 'array';
+    if (!arg.preview) return arg.description || (isArray ? 'Array' : 'Object');
+    const parts = arg.preview.properties.map((p) => `${p.name}: ${p.value !== undefined ? p.value : p.type}`);
+    const body = parts.join(', ') + (arg.preview.overflow ? ', …' : '');
+    return isArray ? `(${arg.description ? arg.description.replace(/^Array\((\d+)\)$/, '$1') : ''}) [${body}]` : `{${body}}`;
+  }
+
+  function renderPropertyRow(p) {
+    const row = document.createElement('div');
+    const keySpan = document.createElement('span');
+    keySpan.className = 'v-key';
+    keySpan.textContent = p.name + ': ';
+    row.appendChild(keySpan);
+    row.appendChild(renderArg(p));
+    return row;
+  }
+
+  function renderObject(arg) {
+    const wrapper = document.createElement('span');
+
+    const label = document.createElement('span');
+    label.className = 'v-punct';
+    label.textContent = previewText(arg);
+
+    if (!arg.objectId) {
+      wrapper.appendChild(label);
+      return wrapper;
+    }
+
+    const toggle = document.createElement('span');
+    toggle.className = 'console-obj-toggle';
+    toggle.textContent = '▶';
+
+    const childrenEl = document.createElement('div');
+    childrenEl.className = 'console-obj-children hidden';
+
+    let expanded = false;
+    let loaded = false;
+
+    toggle.addEventListener('click', () => {
+      expanded = !expanded;
+      toggle.textContent = expanded ? '▼' : '▶';
+      childrenEl.classList.toggle('hidden', !expanded);
+      if (expanded && !loaded) {
+        loaded = true;
+        childrenEl.textContent = 'Loading…';
+        requestProperties(arg.objectId, (properties) => {
+          childrenEl.innerHTML = '';
+          if (!properties.length) {
+            childrenEl.textContent = '(no properties)';
+            return;
+          }
+          properties.forEach((p) => childrenEl.appendChild(renderPropertyRow(p)));
+        });
+      }
+    });
+
+    wrapper.appendChild(toggle);
+    wrapper.appendChild(label);
+    wrapper.appendChild(childrenEl);
+    return wrapper;
+  }
+
+  function renderArg(arg) {
+    if (arg.kind === 'object') return renderObject(arg);
+    const span = document.createElement('span');
+    if (arg.kind === 'function') {
+      span.className = 'v-function';
+      span.textContent = arg.text;
+    } else if (arg.type === 'string') {
+      span.className = 'v-string';
+      span.textContent = arg.text;
+    } else if (arg.type === 'number' || arg.type === 'boolean' || arg.type === 'bigint') {
+      span.className = 'v-number';
+      span.textContent = arg.text;
+    } else {
+      span.className = 'v-null';
+      span.textContent = arg.text;
+    }
+    return span;
+  }
+
+  const LEVEL_CLASS = { error: 'level-error', warning: 'level-warning', warn: 'level-warning', info: 'level-info' };
+
+  function appendConsoleEntry(entry) {
+    const row = document.createElement('div');
+    row.className = 'console-entry ' + (LEVEL_CLASS[entry.level] || '');
+
+    const time = document.createElement('span');
+    time.className = 'console-time';
+    const d = entry.timestamp ? new Date(entry.timestamp) : new Date();
+    time.textContent = d.toLocaleTimeString(undefined, { hour12: false });
+    row.appendChild(time);
+
+    const content = document.createElement('div');
+    content.className = 'console-content';
+    (entry.args || []).forEach((arg, i) => {
+      if (i > 0) content.appendChild(document.createTextNode(' '));
+      content.appendChild(renderArg(arg));
+    });
+    if (entry.stack) {
+      const stack = document.createElement('div');
+      stack.className = 'console-stack';
+      stack.textContent = entry.stack;
+      content.appendChild(stack);
+    }
+    row.appendChild(content);
+
+    consoleBody.appendChild(row);
+    consoleEntryCount++;
+    consoleCount.textContent = String(consoleEntryCount);
+    if (stickToBottom) {
+      consoleBody.scrollTop = consoleBody.scrollHeight;
+    }
+  }
+
   window.addEventListener('message', (event) => {
     const message = event.data;
     switch (message.type) {
@@ -308,6 +462,18 @@
         else if (message.state === 'error') showErrorStatus(message.message);
         else hideStatus();
         break;
+      case 'console':
+        appendConsoleEntry(message.entry);
+        break;
+      case 'consoleClear':
+        clearConsole();
+        break;
+      case 'consoleProperties': {
+        const callback = pendingPropertyRequests.get(message.requestId);
+        pendingPropertyRequests.delete(message.requestId);
+        if (callback) callback(message.properties || []);
+        break;
+      }
     }
   });
 
