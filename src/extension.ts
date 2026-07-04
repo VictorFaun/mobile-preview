@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as os from 'os';
 import * as path from 'path';
 import { chromium, devices as pwDevices, Browser, BrowserContext, CDPSession, Page } from 'playwright';
+import { TraceMap, originalPositionFor } from '@jridgewell/trace-mapping';
 
 interface PreviewState {
   url: string;
@@ -99,16 +100,28 @@ function resolveDeviceSpec(state: PreviewState): DeviceSpec {
     };
   }
 
-  const key = state.orientation === 'landscape' ? `${preset.pwName} landscape` : preset.pwName;
-  const descriptor = (pwDevices as Record<string, any>)[key] ?? (pwDevices as Record<string, any>)[preset.pwName];
+  const portraitDescriptor = (pwDevices as Record<string, any>)[preset.pwName];
   // Playwright's `viewport` shrinks the height to leave room for a mobile browser's
   // address bar (matching real Mobile Safari/Chrome). Chrome DevTools' device toolbar
   // does not reserve that space, so use the full `screen` size to match the dimensions
   // DevTools shows (e.g. iPhone 14 Pro Max = 430x932, not 430x740).
-  const size = descriptor.screen ?? descriptor.viewport;
+  //
+  // We always derive width/height from the *portrait* descriptor and swap them
+  // ourselves for landscape — Playwright's own "X landscape" descriptors report
+  // `screen` as the un-rotated native panel size (still 430x932 for an iPhone 14
+  // Pro Max), so preferring it there would silently cancel the rotation out.
+  const portraitSize = portraitDescriptor.screen ?? portraitDescriptor.viewport;
+  let width = portraitSize.width;
+  let height = portraitSize.height;
+  if (state.orientation === 'landscape') {
+    [width, height] = [height, width];
+  }
+
+  const key = state.orientation === 'landscape' ? `${preset.pwName} landscape` : preset.pwName;
+  const descriptor = (pwDevices as Record<string, any>)[key] ?? portraitDescriptor;
   return {
-    width: size.width,
-    height: size.height,
+    width,
+    height,
     deviceScaleFactor: descriptor.deviceScaleFactor,
     isMobile: descriptor.isMobile,
     hasTouch: descriptor.hasTouch,
@@ -155,6 +168,9 @@ export function activate(context: vscode.ExtensionContext) {
     }),
     vscode.commands.registerCommand('mobilePreview.screenshot', () => getActiveHost()?.takeScreenshot()),
     vscode.commands.registerCommand('mobilePreview.toggleControls', () => getActiveHost()?.toggleControls()),
+    vscode.commands.registerCommand('mobilePreview.moveToNewWindow', () =>
+      vscode.commands.executeCommand('workbench.action.moveEditorToNewWindow')
+    ),
     vscode.window.onDidChangeActiveColorTheme(() => {
       for (const owner of allHostOwners) {
         owner.host?.onActiveColorThemeChanged();
@@ -200,15 +216,44 @@ function summarizeRemoteObject(obj: any): ConsoleArgSummary {
   };
 }
 
-function formatStackTrace(details: any): string | undefined {
-  const frames = details?.stackTrace?.callFrames;
-  if (!frames || !frames.length) return undefined;
-  return frames
-    .map((f: any) => `    at ${f.functionName || '<anonymous>'} (${f.url || 'unknown'}:${f.lineNumber + 1}:${f.columnNumber + 1})`)
-    .join('\n');
+interface SourceLocation {
+  url: string;
+  line: number;
+  column: number;
+}
+
+interface RawCallFrame {
+  scriptId: string;
+  url: string;
+  lineNumber: number;
+  columnNumber: number;
+  functionName?: string;
 }
 
 let consoleEntrySeq = 0;
+
+interface DomNodeSummary {
+  nodeId: number;
+  nodeType: number;
+  nodeName: string;
+  attributes?: string[];
+  textContent?: string;
+  children?: DomNodeSummary[];
+}
+
+function summarizeDomNode(node: any): DomNodeSummary {
+  const children = (node.children || [])
+    .filter((c: any) => c.nodeType === 1 || (c.nodeType === 3 && c.nodeValue && c.nodeValue.trim()))
+    .map(summarizeDomNode);
+  return {
+    nodeId: node.nodeId,
+    nodeType: node.nodeType,
+    nodeName: node.nodeName,
+    attributes: node.attributes,
+    textContent: node.nodeType === 3 ? node.nodeValue : undefined,
+    children: children.length ? children : undefined
+  };
+}
 
 class BrowserSession {
   private browser?: Browser;
@@ -217,8 +262,69 @@ class BrowserSession {
   private cdp?: CDPSession;
   private specKey = '';
   private pendingUrl?: string;
+  private navEpoch = 0;
+  private scriptInfo = new Map<string, { url: string; sourceMapURL?: string }>();
+  private sourceMapCache = new Map<string, Promise<TraceMap | null>>();
 
   constructor(private readonly postMessage: (message: unknown) => void) {}
+
+  /** Fetches and parses a script's source map, resolved relative to the script's own URL. */
+  private async fetchSourceMap(scriptUrl: string, sourceMapURL: string): Promise<TraceMap | null> {
+    try {
+      let mapJson: string;
+      if (sourceMapURL.startsWith('data:')) {
+        const commaIndex = sourceMapURL.indexOf(',');
+        const meta = sourceMapURL.slice(5, commaIndex);
+        const payload = sourceMapURL.slice(commaIndex + 1);
+        mapJson = meta.includes('base64') ? Buffer.from(payload, 'base64').toString('utf8') : decodeURIComponent(payload);
+      } else {
+        if (!this.context) return null;
+        const resolvedUrl = new URL(sourceMapURL, scriptUrl).toString();
+        const response = await this.context.request.get(resolvedUrl, { timeout: 3000 });
+        if (!response.ok()) return null;
+        mapJson = await response.text();
+      }
+      return new TraceMap(JSON.parse(mapJson));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Resolves a compiled (runtime) call-frame location back to its original
+   * source location via the script's source map, matching what Chrome
+   * DevTools shows (e.g. "tournament.service.ts:169") instead of the
+   * compiled/bundled output location CDP itself reports.
+   */
+  private async resolveLocation(frame: RawCallFrame | undefined): Promise<SourceLocation | undefined> {
+    if (!frame || !frame.url) return undefined;
+    const fallback: SourceLocation = { url: frame.url, line: frame.lineNumber + 1, column: frame.columnNumber + 1 };
+
+    const info = this.scriptInfo.get(frame.scriptId);
+    if (!info?.sourceMapURL) return fallback;
+
+    if (!this.sourceMapCache.has(frame.scriptId)) {
+      this.sourceMapCache.set(frame.scriptId, this.fetchSourceMap(info.url, info.sourceMapURL));
+    }
+    const tracer = await this.sourceMapCache.get(frame.scriptId)!;
+    if (!tracer) return fallback;
+
+    const pos = originalPositionFor(tracer, { line: frame.lineNumber + 1, column: frame.columnNumber });
+    if (!pos.source || pos.line == null) return fallback;
+    return { url: pos.source, line: pos.line, column: (pos.column ?? 0) + 1 };
+  }
+
+  private async formatStackTrace(details: any): Promise<string | undefined> {
+    const frames: RawCallFrame[] | undefined = details?.stackTrace?.callFrames;
+    if (!frames || !frames.length) return undefined;
+    const resolved = await Promise.all(frames.map((f) => this.resolveLocation(f)));
+    return frames
+      .map((f, i) => {
+        const loc = resolved[i] ?? { url: f.url || 'unknown', line: f.lineNumber + 1, column: f.columnNumber + 1 };
+        return `    at ${f.functionName || '<anonymous>'} (${loc.url}:${loc.line}:${loc.column})`;
+      })
+      .join('\n');
+  }
 
   async setDevice(spec: DeviceSpec) {
     const key = JSON.stringify(spec);
@@ -264,20 +370,35 @@ class BrowserSession {
     });
 
     await this.cdp.send('Runtime.enable').catch(() => {});
-    this.cdp.on('Runtime.consoleAPICalled', (e: any) => {
+    await this.cdp.send('DOM.enable').catch(() => {});
+
+    this.scriptInfo.clear();
+    this.sourceMapCache.clear();
+    await this.cdp.send('Debugger.enable').catch(() => {});
+    this.cdp.on('Debugger.scriptParsed', (e: any) => {
+      this.scriptInfo.set(e.scriptId, { url: e.url, sourceMapURL: e.sourceMapURL });
+    });
+
+    this.cdp.on('Runtime.consoleAPICalled', async (e: any) => {
+      const location = await this.resolveLocation(e.stackTrace?.callFrames?.[0]);
       this.postMessage({
         type: 'console',
         entry: {
           id: ++consoleEntrySeq,
           level: e.type,
           timestamp: e.timestamp,
-          args: (e.args || []).map(summarizeRemoteObject)
+          args: (e.args || []).map(summarizeRemoteObject),
+          location
         }
       });
     });
-    this.cdp.on('Runtime.exceptionThrown', (e: any) => {
+    this.cdp.on('Runtime.exceptionThrown', async (e: any) => {
       const details = e.exceptionDetails;
       const message = details?.exception?.description || details?.text || 'Uncaught exception';
+      const [stack, location] = await Promise.all([
+        this.formatStackTrace(details),
+        this.resolveLocation(details?.stackTrace?.callFrames?.[0])
+      ]);
       this.postMessage({
         type: 'console',
         entry: {
@@ -285,7 +406,8 @@ class BrowserSession {
           level: 'error',
           timestamp: e.timestamp,
           args: [{ kind: 'primitive', type: 'string', text: message }],
-          stack: formatStackTrace(details)
+          stack,
+          location
         }
       });
     });
@@ -300,11 +422,13 @@ class BrowserSession {
   async loadUrl(url: string) {
     this.pendingUrl = url;
     if (!this.page) return;
+    const epoch = ++this.navEpoch;
     this.postMessage({ type: 'consoleClear' });
     this.postMessage({ type: 'status', state: 'loading' });
     try {
       await this.page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
       this.postMessage({ type: 'status', state: 'ok' });
+      this.sendDomTreeSettled(epoch);
     } catch (err: any) {
       this.postMessage({ type: 'status', state: 'error', message: err?.message ?? String(err) });
     }
@@ -312,8 +436,54 @@ class BrowserSession {
 
   async refresh() {
     if (!this.page) return;
+    const epoch = ++this.navEpoch;
     this.postMessage({ type: 'consoleClear' });
     await this.page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {});
+    this.sendDomTreeSettled(epoch);
+  }
+
+  async sendDomTree() {
+    const tree = await this.getDocument();
+    this.postMessage({ type: 'domTree', tree });
+  }
+
+  /**
+   * The DOM at `domcontentloaded` is often incomplete for client-rendered apps
+   * (React/Vue/Angular mount their content slightly afterwards), so re-fetch a
+   * few times as the page settles instead of trusting a single early snapshot.
+   * `epoch` guards against a stale resend landing after a newer navigation.
+   */
+  private sendDomTreeSettled(epoch: number) {
+    const attempt = async () => {
+      if (epoch !== this.navEpoch) return;
+      await this.sendDomTree();
+    };
+    void attempt();
+    this.page
+      ?.waitForLoadState('load')
+      .then(attempt)
+      .catch(() => {});
+    setTimeout(attempt, 800);
+  }
+
+  async getDocument(): Promise<DomNodeSummary | null> {
+    if (!this.cdp) return null;
+    try {
+      const { root }: any = await this.cdp.send('DOM.getDocument', { depth: -1, pierce: false });
+      return summarizeDomNode(root);
+    } catch {
+      return null;
+    }
+  }
+
+  async getBoxModel(nodeId: number): Promise<any> {
+    if (!this.cdp) return null;
+    try {
+      const { model }: any = await this.cdp.send('DOM.getBoxModel', { nodeId });
+      return model;
+    } catch {
+      return null;
+    }
   }
 
   async getProperties(objectId: string): Promise<(ConsoleArgSummary & { name: string })[]> {
@@ -483,6 +653,17 @@ class MobilePreviewHost {
         this.postMessage({ type: 'consoleProperties', requestId: message.requestId, properties });
         break;
       }
+      case 'domRefresh':
+        await this.session.sendDomTree();
+        break;
+      case 'domHover': {
+        const box = await this.session.getBoxModel(message.nodeId);
+        this.postMessage({ type: 'domHighlight', box });
+        break;
+      }
+      case 'domHoverEnd':
+        this.postMessage({ type: 'domHighlight', box: null });
+        break;
       case 'saveState':
         updateState(this.context, message.state ?? {});
         break;
@@ -608,7 +789,7 @@ class MobilePreviewPanelManager {
 
 const ICONS = {
   rotate:
-    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>',
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/><rect x="9.5" y="7.3" width="5" height="9.4" rx="1.2"/><line x1="11.2" y1="14.6" x2="12.8" y2="14.6"/></svg>',
   gear:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
   sun:
@@ -627,6 +808,8 @@ const ICONS = {
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>',
   terminal:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
+  code:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
   trash:
     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
   close:
@@ -697,14 +880,24 @@ function buildHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
       <button id="go-btn" class="icon-btn" title="Load URL">${ICONS.arrowRight}</button>
     </div>
   </div>
-  <div id="stage">
-    <div id="preview-wrapper">
-      <canvas id="preview-canvas" tabindex="0"></canvas>
+  <div id="stage-wrapper">
+    <div id="stage">
+      <div id="preview-wrapper">
+        <canvas id="preview-canvas" tabindex="0"></canvas>
+        <div id="dom-highlight" class="hidden">
+          <div class="dom-box dom-box-margin"></div>
+          <div class="dom-box dom-box-border"></div>
+          <div class="dom-box dom-box-padding"></div>
+          <div class="dom-box dom-box-content"></div>
+          <div id="dom-highlight-label"></div>
+        </div>
+      </div>
     </div>
     <div id="floating-toolbar">
       <button id="reload-btn" class="icon-btn" title="Reload">${ICONS.refresh}</button>
       <button id="screenshot-btn" class="icon-btn" title="Take screenshot">${ICONS.camera}</button>
-      <button id="console-btn" class="icon-btn" title="Toggle console">${ICONS.terminal}</button>
+      <button id="elements-btn" class="icon-btn" title="Open Elements">${ICONS.code}</button>
+      <button id="console-btn" class="icon-btn" title="Open Console">${ICONS.terminal}</button>
     </div>
     <div id="status-overlay" class="hidden">
       <div id="status-card">
@@ -716,14 +909,19 @@ function buildHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
       </div>
     </div>
     <div id="console-panel">
+      <div id="console-resize-handle"><div id="console-resize-grip"></div></div>
       <div id="console-header">
-        <span id="console-title">Console</span>
-        <span id="console-count">0</span>
+        <div class="devtools-tabs">
+          <button class="devtools-tab active" id="elements-tab-btn" data-tab="elements">Elements</button>
+          <button class="devtools-tab" id="console-tab-btn" data-tab="console">Console <span id="console-count">0</span></button>
+        </div>
         <span class="flex-spacer"></span>
-        <button id="console-clear-btn" class="icon-btn" title="Clear console">${ICONS.trash}</button>
-        <button id="console-close-btn" class="icon-btn" title="Collapse console">${ICONS.close}</button>
+        <button id="elements-refresh-btn" class="icon-btn" title="Refresh element tree">${ICONS.refresh}</button>
+        <button id="console-clear-btn" class="icon-btn hidden" title="Clear console">${ICONS.trash}</button>
+        <button id="console-close-btn" class="icon-btn" title="Collapse">${ICONS.close}</button>
       </div>
-      <div id="console-body"></div>
+      <div id="elements-body" class="devtools-body"></div>
+      <div id="console-body" class="devtools-body hidden"></div>
     </div>
   </div>
   <div id="touch-cursor" class="hidden"></div>

@@ -13,6 +13,7 @@
   const goBtn = document.getElementById('go-btn');
   const themeButtons = Array.from(document.querySelectorAll('#theme-group button'));
   const stage = document.getElementById('stage');
+  const stageWrapper = document.getElementById('stage-wrapper');
   const previewWrapper = document.getElementById('preview-wrapper');
   const canvas = document.getElementById('preview-canvas');
   const statusOverlay = document.getElementById('status-overlay');
@@ -25,15 +26,27 @@
   const touchCursor = document.getElementById('touch-cursor');
   const consoleBtn = document.getElementById('console-btn');
   const consolePanel = document.getElementById('console-panel');
-  const consoleHeader = document.getElementById('console-header');
   const consoleBody = document.getElementById('console-body');
   const consoleCount = document.getElementById('console-count');
   const consoleClearBtn = document.getElementById('console-clear-btn');
   const consoleCloseBtn = document.getElementById('console-close-btn');
+  const consoleResizeHandle = document.getElementById('console-resize-handle');
+  const elementsTabBtn = document.getElementById('elements-tab-btn');
+  const consoleTabBtn = document.getElementById('console-tab-btn');
+  const elementsBody = document.getElementById('elements-body');
+  const elementsRefreshBtn = document.getElementById('elements-refresh-btn');
+  const domHighlight = document.getElementById('dom-highlight');
+  const domHighlightLabel = document.getElementById('dom-highlight-label');
+  const domBoxMargin = domHighlight.querySelector('.dom-box-margin');
+  const domBoxBorder = domHighlight.querySelector('.dom-box-border');
+  const domBoxPadding = domHighlight.querySelector('.dom-box-padding');
+  const domBoxContent = domHighlight.querySelector('.dom-box-content');
   const settingsBtn = document.getElementById('settings-btn');
   const settingsPopover = document.getElementById('settings-popover');
   const reloadBtn = document.getElementById('reload-btn');
   const screenshotBtn = document.getElementById('screenshot-btn');
+  const elementsBtn = document.getElementById('elements-btn');
+  const floatingToolbar = document.getElementById('floating-toolbar');
   const ctx = canvas.getContext('2d');
 
   const STAGE_PADDING = 28;
@@ -76,8 +89,15 @@
     canvas.style.width = w + 'px';
     canvas.style.height = h + 'px';
     canvas.style.transform = `scale(${state.zoom / 100})`;
-    previewWrapper.style.width = Math.round(w * (state.zoom / 100)) + 'px';
-    previewWrapper.style.height = Math.round(h * (state.zoom / 100)) + 'px';
+    // Use the exact (unrounded) scaled size here — it must match what
+    // `transform: scale()` renders to the sub-pixel, or the wrapper's clip
+    // boundary and the canvas's actual edge disagree by a fraction of a
+    // pixel, letting a hairline of the canvas's own white background show.
+    previewWrapper.style.width = w * (state.zoom / 100) + 'px';
+    previewWrapper.style.height = h * (state.zoom / 100) + 'px';
+    domHighlight.style.width = w + 'px';
+    domHighlight.style.height = h + 'px';
+    domHighlight.style.transform = `scale(${state.zoom / 100})`;
 
     zoomLabel.textContent = state.zoom + '%';
     fitBtn.classList.toggle('active', state.zoomMode === 'auto');
@@ -318,23 +338,151 @@
     stickToBottom = consoleBody.scrollHeight - consoleBody.scrollTop - consoleBody.clientHeight < 24;
   });
 
+  let lastPanelHeight = null; // px; remembers a manually-dragged size across opens
+  const PANEL_MARGIN = 8;
+
+  // The floating toolbar must always stay above the console/elements panel, so
+  // the panel's own max height is capped by how much room the toolbar needs —
+  // squeezed all the way to the top of the stage, at minimum.
+  function maxPanelHeight() {
+    // Three margins' worth of slack: the toolbar's own gap from the top edge,
+    // the toolbar's height, and the gap between the toolbar and the panel —
+    // otherwise the two end up touching with zero space between them.
+    return stageWrapper.clientHeight - floatingToolbar.offsetHeight - PANEL_MARGIN * 3;
+  }
+
+  function defaultPanelHeight() {
+    return Math.min(Math.round(stageWrapper.clientHeight * 0.46), maxPanelHeight());
+  }
+
   function setConsoleExpanded(expanded) {
     consolePanel.classList.toggle('expanded', expanded);
-    if (expanded && stickToBottom) {
+    consolePanel.style.height = expanded ? (lastPanelHeight || defaultPanelHeight()) + 'px' : '0px';
+    if (expanded && activeDevtoolsTab === 'console' && stickToBottom) {
+      consoleBody.scrollTop = consoleBody.scrollHeight;
+    }
+    applyToolbarPosition();
+  }
+
+  // #console-panel's height is CSS-animated, so a getBoundingClientRect() taken
+  // right after toggling it still reflects the pre-animation box — re-clamp the
+  // toolbar once the animation actually settles.
+  consolePanel.addEventListener('transitionend', (e) => {
+    if (e.propertyName === 'height') applyToolbarPosition();
+  });
+
+  // --- drag the floating toolbar up/down (useful in landscape, where the
+  // default centered position can sit over the content) ---
+  let userToolbarTop = null; // px from the top of #stage-wrapper, only set once the user drags it
+  let draggingToolbar = false;
+  let toolbarDragOffset = 0;
+
+  function defaultToolbarTop() {
+    return (stageWrapper.clientHeight - floatingToolbar.offsetHeight) / 2;
+  }
+
+  function panelTopWithinWrapper() {
+    if (!consolePanel.classList.contains('expanded')) return stageWrapper.clientHeight;
+    return consolePanel.getBoundingClientRect().top - stageWrapper.getBoundingClientRect().top;
+  }
+
+  function clampToolbarTop(top) {
+    const wrapperH = stageWrapper.clientHeight;
+    const toolbarH = floatingToolbar.offsetHeight;
+    // The panel's height is itself capped so the toolbar always fits above it
+    // (see maxPanelHeight), so this is a safety clamp, not the primary limit.
+    const maxTop = Math.min(wrapperH - toolbarH - PANEL_MARGIN, panelTopWithinWrapper() - toolbarH - PANEL_MARGIN);
+    return Math.max(PANEL_MARGIN, Math.min(maxTop, top));
+  }
+
+  function applyToolbarPosition() {
+    const desired = userToolbarTop !== null ? userToolbarTop : defaultToolbarTop();
+    floatingToolbar.style.top = clampToolbarTop(desired) + 'px';
+    floatingToolbar.style.bottom = 'auto';
+    floatingToolbar.style.transform = 'none';
+  }
+
+  floatingToolbar.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.icon-btn')) return; // let button clicks through untouched
+    draggingToolbar = true;
+    floatingToolbar.classList.add('dragging');
+    const rect = floatingToolbar.getBoundingClientRect();
+    toolbarDragOffset = e.clientY - rect.top;
+    e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!draggingToolbar) return;
+    const wrapperRect = stageWrapper.getBoundingClientRect();
+    userToolbarTop = e.clientY - wrapperRect.top - toolbarDragOffset;
+    applyToolbarPosition();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!draggingToolbar) return;
+    draggingToolbar = false;
+    floatingToolbar.classList.remove('dragging');
+  });
+
+  new ResizeObserver(() => applyToolbarPosition()).observe(stageWrapper);
+
+  // --- drag to resize the console/elements panel ---
+  let resizing = false;
+
+  consoleResizeHandle.addEventListener('mousedown', (e) => {
+    resizing = true;
+    consolePanel.classList.add('dragging');
+    e.preventDefault();
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!resizing) return;
+    const wrapperRect = stageWrapper.getBoundingClientRect();
+    const min = 80;
+    const max = maxPanelHeight();
+    const newHeight = Math.max(min, Math.min(max, wrapperRect.bottom - e.clientY));
+    lastPanelHeight = newHeight;
+    consolePanel.style.height = newHeight + 'px';
+    applyToolbarPosition();
+  });
+
+  window.addEventListener('mouseup', () => {
+    if (!resizing) return;
+    resizing = false;
+    consolePanel.classList.remove('dragging');
+  });
+
+  consoleCloseBtn.addEventListener('click', () => setConsoleExpanded(false));
+  consoleClearBtn.addEventListener('click', () => clearConsole());
+
+  elementsBtn.addEventListener('click', () => {
+    setDevtoolsTab('elements');
+    setConsoleExpanded(true);
+  });
+  consoleBtn.addEventListener('click', () => {
+    setDevtoolsTab('console');
+    setConsoleExpanded(true);
+  });
+
+  // --- devtools tabs (Elements / Console) ---
+  let activeDevtoolsTab = 'elements';
+
+  function setDevtoolsTab(tab) {
+    activeDevtoolsTab = tab;
+    elementsTabBtn.classList.toggle('active', tab === 'elements');
+    consoleTabBtn.classList.toggle('active', tab === 'console');
+    elementsBody.classList.toggle('hidden', tab !== 'elements');
+    consoleBody.classList.toggle('hidden', tab !== 'console');
+    elementsRefreshBtn.classList.toggle('hidden', tab !== 'elements');
+    consoleClearBtn.classList.toggle('hidden', tab !== 'console');
+    if (tab === 'console' && stickToBottom) {
       consoleBody.scrollTop = consoleBody.scrollHeight;
     }
   }
 
-  consoleBtn.addEventListener('click', () => setConsoleExpanded(!consolePanel.classList.contains('expanded')));
-  consoleHeader.addEventListener('click', () => setConsoleExpanded(!consolePanel.classList.contains('expanded')));
-  consoleCloseBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    setConsoleExpanded(false);
-  });
-  consoleClearBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    clearConsole();
-  });
+  elementsTabBtn.addEventListener('click', () => setDevtoolsTab('elements'));
+  consoleTabBtn.addEventListener('click', () => setDevtoolsTab('console'));
+  elementsRefreshBtn.addEventListener('click', () => vscode.postMessage({ type: 'domRefresh' }));
 
   function clearConsole() {
     consoleBody.innerHTML = '';
@@ -433,9 +581,27 @@
 
   const LEVEL_CLASS = { error: 'level-error', warning: 'level-warning', warn: 'level-warning', info: 'level-info' };
 
+  function formatLocation(location) {
+    // Match Chrome's console format ("tournament.service.ts:169") — just the
+    // file name and line, not a full URL or the column.
+    let name = location.url;
+    try {
+      const parsed = new URL(location.url);
+      const segments = parsed.pathname.split('/').filter(Boolean);
+      name = segments[segments.length - 1] || parsed.hostname;
+    } catch {
+      const segments = name.split('/').filter(Boolean);
+      name = segments[segments.length - 1] || name;
+    }
+    return `${name}:${location.line}`;
+  }
+
   function appendConsoleEntry(entry) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'console-entry ' + (LEVEL_CLASS[entry.level] || '');
+
     const row = document.createElement('div');
-    row.className = 'console-entry ' + (LEVEL_CLASS[entry.level] || '');
+    row.className = 'console-entry-row';
 
     const time = document.createElement('span');
     time.className = 'console-time';
@@ -457,12 +623,159 @@
     }
     row.appendChild(content);
 
-    consoleBody.appendChild(row);
+    let locationDetail;
+    if (entry.location) {
+      const locationBtn = document.createElement('button');
+      locationBtn.type = 'button';
+      locationBtn.className = 'console-location-btn';
+      locationBtn.title = 'Show source location';
+      locationBtn.textContent = 'ℹ';
+
+      locationDetail = document.createElement('div');
+      locationDetail.className = 'console-location-detail hidden';
+      locationDetail.textContent = formatLocation(entry.location);
+
+      locationBtn.addEventListener('click', () => locationDetail.classList.toggle('hidden'));
+      row.appendChild(locationBtn);
+    }
+
+    wrapper.appendChild(row);
+    if (locationDetail) wrapper.appendChild(locationDetail);
+
+    consoleBody.appendChild(wrapper);
     consoleEntryCount++;
     consoleCount.textContent = String(consoleEntryCount);
     if (stickToBottom) {
       consoleBody.scrollTop = consoleBody.scrollHeight;
     }
+  }
+
+  // --- elements tree ---
+  function renderDomNode(node, depth) {
+    const wrapper = document.createElement('div');
+
+    if (node.nodeType === 3) {
+      const row = document.createElement('div');
+      row.className = 'dom-row';
+      const indent = document.createElement('span');
+      indent.className = 'dom-indent';
+      indent.style.width = depth * 14 + 12 + 'px';
+      row.appendChild(indent);
+      const text = document.createElement('span');
+      text.className = 'dom-text';
+      const trimmed = (node.textContent || '').trim().replace(/\s+/g, ' ');
+      text.textContent = trimmed.length > 80 ? trimmed.slice(0, 80) + '…' : trimmed;
+      row.appendChild(text);
+      wrapper.appendChild(row);
+      return wrapper;
+    }
+
+    const row = document.createElement('div');
+    row.className = 'dom-row';
+
+    const indent = document.createElement('span');
+    indent.className = 'dom-indent';
+    indent.style.width = depth * 14 + 'px';
+    row.appendChild(indent);
+
+    const hasChildren = !!(node.children && node.children.length);
+    const toggle = document.createElement('span');
+    toggle.className = 'dom-toggle';
+    toggle.textContent = hasChildren ? '▾' : '';
+    row.appendChild(toggle);
+
+    const tagOpen = document.createElement('span');
+    tagOpen.className = 'dom-tag';
+    tagOpen.textContent = '<' + (node.nodeName || '').toLowerCase();
+    row.appendChild(tagOpen);
+
+    const attrs = node.attributes || [];
+    for (let i = 0; i < attrs.length; i += 2) {
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'dom-attr-name';
+      nameSpan.textContent = ' ' + attrs[i] + '=';
+      row.appendChild(nameSpan);
+      const valueSpan = document.createElement('span');
+      valueSpan.className = 'dom-attr-value';
+      valueSpan.textContent = '"' + attrs[i + 1] + '"';
+      row.appendChild(valueSpan);
+    }
+
+    const tagClose = document.createElement('span');
+    tagClose.className = 'dom-tag';
+    tagClose.textContent = '>';
+    row.appendChild(tagClose);
+
+    row.addEventListener('mouseenter', () => {
+      row.classList.add('dom-row-hovered');
+      vscode.postMessage({ type: 'domHover', nodeId: node.nodeId });
+    });
+    row.addEventListener('mouseleave', () => {
+      row.classList.remove('dom-row-hovered');
+      vscode.postMessage({ type: 'domHoverEnd' });
+    });
+
+    wrapper.appendChild(row);
+
+    if (hasChildren) {
+      const childrenEl = document.createElement('div');
+      childrenEl.className = 'dom-children';
+      node.children.forEach((child) => childrenEl.appendChild(renderDomNode(child, depth + 1)));
+      wrapper.appendChild(childrenEl);
+
+      let expanded = true;
+      toggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        expanded = !expanded;
+        toggle.textContent = expanded ? '▾' : '▸';
+        childrenEl.classList.toggle('hidden', !expanded);
+      });
+    }
+
+    return wrapper;
+  }
+
+  function renderDomTree(tree) {
+    elementsBody.innerHTML = '';
+    if (tree) elementsBody.appendChild(renderDomNode(tree, 0));
+  }
+
+  function quadRect(quad) {
+    const xs = [quad[0], quad[2], quad[4], quad[6]];
+    const ys = [quad[1], quad[3], quad[5], quad[7]];
+    const left = Math.min(...xs);
+    const top = Math.min(...ys);
+    return { left, top, width: Math.max(...xs) - left, height: Math.max(...ys) - top };
+  }
+
+  function setBoxRect(el, quad) {
+    if (!quad) {
+      el.style.display = 'none';
+      return;
+    }
+    el.style.display = 'block';
+    const r = quadRect(quad);
+    el.style.left = r.left + 'px';
+    el.style.top = r.top + 'px';
+    el.style.width = r.width + 'px';
+    el.style.height = r.height + 'px';
+  }
+
+  function updateDomHighlight(box) {
+    if (!box) {
+      domHighlight.classList.add('hidden');
+      return;
+    }
+    domHighlight.classList.remove('hidden');
+    setBoxRect(domBoxMargin, box.margin);
+    setBoxRect(domBoxBorder, box.border);
+    setBoxRect(domBoxPadding, box.padding);
+    setBoxRect(domBoxContent, box.content);
+
+    const rect = quadRect(box.margin || box.border || box.padding || box.content);
+    domHighlightLabel.textContent = `${Math.round(box.width)} × ${Math.round(box.height)}`;
+    domHighlightLabel.style.left = rect.left + 'px';
+    domHighlightLabel.style.top = Math.max(rect.top, 14) + 'px';
   }
 
   window.addEventListener('message', (event) => {
@@ -516,9 +829,16 @@
         if (callback) callback(message.properties || []);
         break;
       }
+      case 'domTree':
+        renderDomTree(message.tree);
+        break;
+      case 'domHighlight':
+        updateDomHighlight(message.box);
+        break;
     }
   });
 
   render();
+  applyToolbarPosition();
   vscode.postMessage({ type: 'ready' });
 })();

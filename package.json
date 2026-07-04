@@ -2,7 +2,7 @@
   "name": "mobile-preview",
   "displayName": "Mobile Preview",
   "description": "Live mobile device preview for local dev servers, like Chrome DevTools' device toolbar, opened as an editor tab beside your code.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "VictorFaundez",
   "license": "MIT",
   "repository": {
@@ -89,6 +89,12 @@
         "title": "Toggle Settings Panel",
         "icon": "$(gear)",
         "category": "Mobile Preview"
+      },
+      {
+        "command": "mobilePreview.moveToNewWindow",
+        "title": "Move Preview to New Window",
+        "icon": "$(multiple-windows)",
+        "category": "Mobile Preview"
       }
     ],
     "menus": {
@@ -112,6 +118,11 @@
           "command": "mobilePreview.toggleControls",
           "when": "activeWebviewPanelId == 'mobilePreview.panel'",
           "group": "navigation@3"
+        },
+        {
+          "command": "mobilePreview.moveToNewWindow",
+          "when": "activeWebviewPanelId == 'mobilePreview.panel'",
+          "group": "navigation@4"
         }
       ],
       "view/title": [
@@ -144,6 +155,7 @@
     "typescript": "^5.4.0"
   },
   "dependencies": {
+    "@jridgewell/trace-mapping": "^0.3.31",
     "playwright": "^1.61.1"
   }
 }

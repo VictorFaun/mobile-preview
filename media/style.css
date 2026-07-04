@@ -378,8 +378,18 @@ body.controls-hidden #floating-toolbar {
 
 /* ---------- stage / preview ---------- */
 
-#stage {
+/* Owns positioning for the floating toolbar / status overlay / console panel,
+   which must stay put regardless of #stage's internal scroll position — an
+   absolutely-positioned child of a scrolling ancestor scrolls with its
+   content, so those overlays live here (a non-scrolling sibling) instead. */
+#stage-wrapper {
   position: relative;
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+#stage {
   flex: 1;
   overflow: auto;
   display: flex;
@@ -387,8 +397,13 @@ body.controls-hidden #floating-toolbar {
 }
 
 #preview-wrapper {
+  position: relative;
   flex: none;
   margin: auto;
+  border-radius: 20px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  transition: box-shadow 0.2s var(--mp-ease);
 }
 
 /* The shadow/radius live on the canvas itself (not a padded wrapper) so they
@@ -398,12 +413,58 @@ body.controls-hidden #floating-toolbar {
   display: block;
   background: #fff;
   border: none;
-  border-radius: 20px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08);
   transform-origin: top left;
   outline: none;
   cursor: none;
-  transition: box-shadow 0.2s var(--mp-ease);
+}
+
+/* Mirrors the canvas's own size/transform exactly, so children can be
+   positioned using plain unscaled page coordinates (same space CDP's
+   DOM.getBoxModel reports in) and the zoom scaling "just works". */
+#dom-highlight {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+  pointer-events: none;
+  z-index: 8;
+}
+
+#dom-highlight.hidden {
+  display: none;
+}
+
+.dom-box {
+  position: absolute;
+}
+
+.dom-box-margin {
+  background: rgba(246, 178, 107, 0.4);
+}
+
+.dom-box-border {
+  background: rgba(255, 229, 153, 0.5);
+}
+
+.dom-box-padding {
+  background: rgba(147, 196, 125, 0.45);
+}
+
+.dom-box-content {
+  background: rgba(168, 85, 247, 0.35);
+  border: 1.5px solid rgba(168, 85, 247, 0.9);
+}
+
+#dom-highlight-label {
+  position: absolute;
+  transform: translateY(-100%);
+  background: #1a1a1a;
+  color: #fff;
+  font-family: var(--vscode-editor-font-family, Consolas, monospace);
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
 }
 
 #touch-cursor {
@@ -448,6 +509,13 @@ body.controls-hidden #floating-toolbar {
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  transition: top 0.2s var(--mp-ease), bottom 0.2s var(--mp-ease), transform 0.2s var(--mp-ease);
+  cursor: grab;
+}
+
+#floating-toolbar.dragging {
+  transition: none;
+  cursor: grabbing;
 }
 
 #floating-toolbar .icon-btn {
@@ -590,6 +658,8 @@ body.controls-hidden #floating-toolbar {
   z-index: 30;
   display: flex;
   flex-direction: column;
+  /* Height is driven entirely from JS (inline style) so a dragged size can be
+     restored exactly, rather than snapping back to a CSS-defined percentage. */
   height: 0;
   max-height: calc(100% - 16px);
   background: color-mix(in srgb, var(--mp-panel), transparent 4%);
@@ -602,26 +672,74 @@ body.controls-hidden #floating-toolbar {
 }
 
 #console-panel.expanded {
-  height: 46%;
   opacity: 1;
   border-color: var(--mp-border);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+}
+
+#console-panel.dragging {
+  transition: none;
+}
+
+#console-resize-handle {
+  flex: none;
+  height: 8px;
+  cursor: ns-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#console-resize-grip {
+  width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--mp-border);
+  transition: background 0.15s var(--mp-ease);
+}
+
+#console-resize-handle:hover #console-resize-grip {
+  background: var(--mp-primary);
 }
 
 #console-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 8px;
+  padding: 0 6px;
   height: 34px;
   flex: none;
-  cursor: pointer;
-  user-select: none;
 }
 
-#console-title {
-  font-weight: 600;
+.devtools-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 100%;
+}
+
+.devtools-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 10px;
+  border: none;
+  background: transparent;
+  color: var(--mp-text-secondary);
   font-size: 12px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: color 0.15s var(--mp-ease), border-color 0.15s var(--mp-ease);
+}
+
+.devtools-tab:hover {
+  color: var(--mp-text);
+}
+
+.devtools-tab.active {
+  color: var(--mp-text);
+  border-bottom-color: var(--mp-primary);
 }
 
 #console-count {
@@ -635,12 +753,18 @@ body.controls-hidden #floating-toolbar {
 }
 
 #console-clear-btn,
-#console-close-btn {
+#console-close-btn,
+#elements-refresh-btn {
   width: 24px;
   height: 24px;
 }
 
-#console-body {
+#elements-refresh-btn.hidden,
+#console-clear-btn.hidden {
+  display: none;
+}
+
+.devtools-body {
   flex: 1;
   overflow: auto;
   font-family: var(--vscode-editor-font-family, Consolas, monospace);
@@ -648,18 +772,58 @@ body.controls-hidden #floating-toolbar {
   border-top: 1px solid var(--mp-border);
 }
 
-#console-panel:not(.expanded) #console-body {
+.devtools-body.hidden {
   display: none;
 }
 
 .console-entry {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
   padding: 5px 12px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   border-left: 3px solid transparent;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.console-entry-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.console-location-btn {
+  flex: none;
+  align-self: center;
+  background: transparent;
+  border: none;
+  color: var(--mp-text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+
+.console-entry:hover .console-location-btn {
+  opacity: 1;
+}
+
+.console-location-btn:hover {
+  color: var(--mp-primary);
+}
+
+.console-location-detail {
+  margin-top: 4px;
+  padding-left: 34px;
+  font-size: 10.5px;
+  color: var(--mp-text-secondary);
+  word-break: break-all;
+}
+
+.console-location-detail.hidden {
+  display: none;
 }
 
 .console-entry:hover {
@@ -742,5 +906,58 @@ body.controls-hidden #floating-toolbar {
 }
 
 .console-obj-children.hidden {
+  display: none;
+}
+
+/* ---------- elements tree ---------- */
+
+#elements-body {
+  padding: 6px 0;
+}
+
+.dom-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 1px 10px 1px 0;
+  cursor: default;
+  white-space: pre;
+}
+
+.dom-row:hover,
+.dom-row.dom-row-hovered {
+  background: color-mix(in srgb, var(--mp-primary), transparent 85%);
+}
+
+.dom-indent {
+  flex: none;
+  display: inline-block;
+}
+
+.dom-toggle {
+  flex: none;
+  width: 12px;
+  color: var(--mp-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.dom-tag {
+  color: #569cd6;
+}
+
+.dom-attr-name {
+  color: #9cdcfe;
+}
+
+.dom-attr-value {
+  color: #ce9178;
+}
+
+.dom-text {
+  color: var(--mp-text-secondary);
+}
+
+.dom-children.hidden {
   display: none;
 }
