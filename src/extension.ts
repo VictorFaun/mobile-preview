@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as os from 'os';
 import * as path from 'path';
+import * as fs from 'fs';
 import { chromium, devices as pwDevices, Browser, BrowserContext, CDPSession, Page } from 'playwright';
 import { TraceMap, originalPositionFor } from '@jridgewell/trace-mapping';
 
@@ -255,6 +256,151 @@ function summarizeDomNode(node: any): DomNodeSummary {
   };
 }
 
+interface CameraPlaceholders {
+  landscape: string;
+  portrait: string;
+}
+
+let cameraPlaceholderCache: CameraPlaceholders | undefined;
+
+/** Loads the fallback "no camera" landscape/portrait images once, as data URIs, so the
+ * per-page init script below can embed them without any extra network/file access. */
+function loadCameraPlaceholders(extensionPath: string): CameraPlaceholders {
+  if (cameraPlaceholderCache) return cameraPlaceholderCache;
+  const asDataUri = (file: string) => {
+    const buf = fs.readFileSync(path.join(extensionPath, 'media', file));
+    return `data:image/svg+xml;base64,${buf.toString('base64')}`;
+  };
+  cameraPlaceholderCache = {
+    landscape: asDataUri('camera-landscape.svg'),
+    portrait: asDataUri('camera-portrait.svg')
+  };
+  return cameraPlaceholderCache;
+}
+
+/**
+ * Injected into every page the preview loads, before any of the site's own scripts run.
+ * It overrides getUserMedia so camera/microphone requests go through our own permission
+ * prompt (relayed to the extension's webview) instead of failing silently in headless
+ * Chromium, and falls back to a synthetic video track (drawn from a placeholder image)
+ * when no real camera is available or the real capture fails. It also relays
+ * navigator.clipboard.writeText/readText to the host's real OS clipboard.
+ */
+function buildMediaOverrideScript(images: CameraPlaceholders): string {
+  return `(function () {
+  var LANDSCAPE_IMG = ${JSON.stringify(images.landscape)};
+  var PORTRAIT_IMG = ${JSON.stringify(images.portrait)};
+
+  function pickImage() {
+    var w = document.documentElement.clientWidth || window.innerWidth || 390;
+    var h = document.documentElement.clientHeight || window.innerHeight || 844;
+    return w >= h ? LANDSCAPE_IMG : PORTRAIT_IMG;
+  }
+
+  function loadImage(src) {
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () { resolve(img); };
+      img.onerror = reject;
+      img.src = src;
+    });
+  }
+
+  function createSilentAudioTrack() {
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    var ctx = new Ctx();
+    var oscillator = ctx.createOscillator();
+    var gain = ctx.createGain();
+    gain.gain.value = 0;
+    var dst = ctx.createMediaStreamDestination();
+    oscillator.connect(gain).connect(dst);
+    oscillator.start();
+    return dst.stream.getAudioTracks()[0];
+  }
+
+  function createFallbackVideoTrack() {
+    return loadImage(pickImage()).then(function (img) {
+      var canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth || 1280;
+      canvas.height = img.naturalHeight || 720;
+      var ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      var stream = canvas.captureStream(15);
+      var track = stream.getVideoTracks()[0];
+      var alive = true;
+      track.addEventListener('ended', function () { alive = false; });
+      (function loop() {
+        if (!alive) return;
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        requestAnimationFrame(loop);
+      })();
+      return track;
+    });
+  }
+
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    var originalGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    var originalEnumerateDevices = navigator.mediaDevices.enumerateDevices
+      ? navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices)
+      : null;
+
+    navigator.mediaDevices.getUserMedia = function (constraints) {
+      constraints = constraints || {};
+      var wantsVideo = !!constraints.video;
+      var wantsAudio = !!constraints.audio;
+      var kind = wantsVideo && wantsAudio ? 'both' : wantsVideo ? 'video' : 'audio';
+
+      return window.__mobilePreviewRequestPermission(kind).then(function (allowed) {
+        if (!allowed) {
+          return Promise.reject(new DOMException('Permission denied', 'NotAllowedError'));
+        }
+        return originalGetUserMedia(constraints).catch(function () { return null; }).then(function (realStream) {
+          var tracks = [];
+          var pending = [];
+          if (wantsVideo) {
+            var realVideo = realStream && realStream.getVideoTracks()[0];
+            if (realVideo) tracks.push(realVideo);
+            else pending.push(createFallbackVideoTrack().then(function (t) { tracks.push(t); }));
+          }
+          if (wantsAudio) {
+            var realAudio = realStream && realStream.getAudioTracks()[0];
+            if (realAudio) tracks.push(realAudio);
+            else {
+              try { tracks.push(createSilentAudioTrack()); } catch (e) { /* best effort */ }
+            }
+          }
+          return Promise.all(pending).then(function () { return new MediaStream(tracks); });
+        });
+      });
+    };
+
+    if (originalEnumerateDevices) {
+      navigator.mediaDevices.enumerateDevices = function () {
+        return originalEnumerateDevices().then(function (devices) {
+          if (devices.some(function (d) { return d.kind === 'videoinput'; })) return devices;
+          return devices.concat([{
+            deviceId: 'mobile-preview-fake-camera',
+            kind: 'videoinput',
+            label: 'Virtual Camera',
+            groupId: 'mobile-preview',
+            toJSON: function () { return this; }
+          }]);
+        });
+      };
+    }
+  }
+
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText = function (text) {
+      return window.__mobilePreviewClipboardWrite(String(text));
+    };
+    navigator.clipboard.readText = function () {
+      return window.__mobilePreviewClipboardRead();
+    };
+  }
+})();`;
+}
+
 class BrowserSession {
   private browser?: Browser;
   private context?: BrowserContext;
@@ -265,8 +411,41 @@ class BrowserSession {
   private navEpoch = 0;
   private scriptInfo = new Map<string, { url: string; sourceMapURL?: string }>();
   private sourceMapCache = new Map<string, Promise<TraceMap | null>>();
+  private permissionRequestSeq = 0;
+  private pendingPermissionRequests = new Map<number, (allowed: boolean) => void>();
 
-  constructor(private readonly postMessage: (message: unknown) => void) {}
+  constructor(
+    private readonly postMessage: (message: unknown) => void,
+    private readonly cameraImages: CameraPlaceholders
+  ) {}
+
+  /** Relays a getUserMedia() permission request to the webview (shown as an
+   * Allow/Block prompt near the top of the preview) and waits for the user's choice. */
+  async requestPermission(kind: string): Promise<boolean> {
+    const requestId = ++this.permissionRequestSeq;
+    let origin = '';
+    try {
+      origin = this.page ? new URL(this.page.url()).origin : '';
+    } catch {
+      // ignore malformed/blank URLs (e.g. about:blank)
+    }
+    const decision = new Promise<boolean>((resolve) => this.pendingPermissionRequests.set(requestId, resolve));
+    this.postMessage({ type: 'permissionRequest', requestId, kind, origin });
+    const allowed = await decision;
+    if (allowed && this.context) {
+      const perms = kind === 'video' ? ['camera'] : kind === 'audio' ? ['microphone'] : ['camera', 'microphone'];
+      await this.context.grantPermissions(perms, origin ? { origin } : undefined).catch(() => {});
+    }
+    return allowed;
+  }
+
+  respondPermission(requestId: number, allowed: boolean) {
+    const resolve = this.pendingPermissionRequests.get(requestId);
+    if (resolve) {
+      this.pendingPermissionRequests.delete(requestId);
+      resolve(allowed);
+    }
+  }
 
   /** Fetches and parses a script's source map, resolved relative to the script's own URL. */
   private async fetchSourceMap(scriptUrl: string, sourceMapURL: string): Promise<TraceMap | null> {
@@ -349,6 +528,18 @@ class BrowserSession {
       hasTouch: spec.hasTouch,
       colorScheme: spec.colorScheme
     });
+
+    // Clipboard access is bridged straight to the real OS clipboard (see the
+    // exposed functions below), so it's safe to grant silently — no custom
+    // prompt, unlike camera/microphone which go through requestPermission().
+    await this.context.grantPermissions(['clipboard-read', 'clipboard-write']).catch(() => {});
+    await this.context.exposeFunction('__mobilePreviewRequestPermission', (kind: string) => this.requestPermission(kind));
+    await this.context.exposeFunction('__mobilePreviewClipboardWrite', async (text: string) => {
+      await vscode.env.clipboard.writeText(text);
+    });
+    await this.context.exposeFunction('__mobilePreviewClipboardRead', async () => vscode.env.clipboard.readText());
+    await this.context.addInitScript({ content: buildMediaOverrideScript(this.cameraImages) });
+
     this.page = await this.context.newPage();
     this.cdp = await this.context.newCDPSession(this.page);
 
@@ -582,7 +773,7 @@ class MobilePreviewHost {
     private readonly context: vscode.ExtensionContext,
     private readonly postMessage: (message: unknown) => void
   ) {
-    this.session = new BrowserSession(postMessage);
+    this.session = new BrowserSession(postMessage, loadCameraPlaceholders(context.extensionPath));
   }
 
   public async refresh() {
@@ -667,6 +858,14 @@ class MobilePreviewHost {
       case 'saveState':
         updateState(this.context, message.state ?? {});
         break;
+      case 'permissionResponse':
+        this.session.respondPermission(message.requestId, message.allowed);
+        break;
+      case 'paste': {
+        const text = await vscode.env.clipboard.readText();
+        if (text) await this.session.insertText(text);
+        break;
+      }
       case 'error':
         vscode.window.showErrorMessage(`Mobile Preview: ${message.message}`);
         break;
@@ -898,6 +1097,19 @@ function buildHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
       <button id="screenshot-btn" class="icon-btn" title="Take screenshot">${ICONS.camera}</button>
       <button id="elements-btn" class="icon-btn" title="Open Elements">${ICONS.code}</button>
       <button id="console-btn" class="icon-btn" title="Open Console">${ICONS.terminal}</button>
+    </div>
+    <div id="permission-prompt" class="hidden">
+      <div id="permission-card">
+        <span id="permission-icon">${ICONS.camera}</span>
+        <div id="permission-text">
+          <strong id="permission-origin"></strong>
+          <span id="permission-message"></span>
+        </div>
+        <div id="permission-actions">
+          <button id="permission-block-btn" class="text-btn">Block</button>
+          <button id="permission-allow-btn" class="text-btn primary">Allow</button>
+        </div>
+      </div>
     </div>
     <div id="status-overlay" class="hidden">
       <div id="status-card">

@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1280" viewBox="0 0 720 1280">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1b2a4a"/>
+      <stop offset="40%" stop-color="#5b6fa3"/>
+      <stop offset="68%" stop-color="#f2a65a"/>
+      <stop offset="100%" stop-color="#ffd9a0"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fff6d8"/>
+      <stop offset="60%" stop-color="#ffd27a"/>
+      <stop offset="100%" stop-color="#ffb35c" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f2a65a" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#1b2a4a" stop-opacity="0.9"/>
+    </linearGradient>
+  </defs>
+  <rect width="720" height="1280" fill="url(#sky)"/>
+  <circle cx="360" cy="760" r="230" fill="url(#sun)"/>
+  <circle cx="360" cy="760" r="70" fill="#ffe9b8"/>
+  <polygon points="0,820 140,660 300,800 460,630 620,800 720,700 720,1280 0,1280" fill="#4b5b86" opacity="0.75"/>
+  <polygon points="0,900 180,760 380,900 540,730 720,880 720,1280 0,1280" fill="#33436b" opacity="0.9"/>
+  <polygon points="0,960 200,860 420,980 620,840 720,900 720,1280 0,1280" fill="#1f2b47"/>
+  <rect x="0" y="960" width="720" height="320" fill="url(#water)"/>
+  <path d="M180 300 q14 -14 28 0 q14 -14 28 0" stroke="#2a2a2a" stroke-width="3" fill="none" opacity="0.5"/>
+  <path d="M420 360 q12 -12 24 0 q12 -12 24 0" stroke="#2a2a2a" stroke-width="3" fill="none" opacity="0.4"/>
+  <g font-family="Consolas, monospace" font-size="18" fill="#ffffff">
+    <rect x="0" y="1234" width="720" height="46" fill="#000000" opacity="0.35"/>
+    <text x="16" y="1262" opacity="0.85">Mobile Preview — sin cámara detectada</text>
+  </g>
+</svg>

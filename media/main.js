@@ -47,6 +47,11 @@
   const screenshotBtn = document.getElementById('screenshot-btn');
   const elementsBtn = document.getElementById('elements-btn');
   const floatingToolbar = document.getElementById('floating-toolbar');
+  const permissionPrompt = document.getElementById('permission-prompt');
+  const permissionOrigin = document.getElementById('permission-origin');
+  const permissionMessage = document.getElementById('permission-message');
+  const permissionAllowBtn = document.getElementById('permission-allow-btn');
+  const permissionBlockBtn = document.getElementById('permission-block-btn');
   const ctx = canvas.getContext('2d');
 
   const STAGE_PADDING = 28;
@@ -269,6 +274,14 @@
     { passive: false }
   );
   canvas.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+      // Paste from the real OS clipboard into whatever input is focused in the
+      // previewed page — the canvas is just a screencast image, so there's no
+      // native paste event to rely on here.
+      e.preventDefault();
+      vscode.postMessage({ type: 'paste' });
+      return;
+    }
     const specialKeys = ['Backspace', 'Enter', 'Tab', 'Escape', 'ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown', 'Delete'];
     if (specialKeys.includes(e.key)) {
       e.preventDefault();
@@ -278,6 +291,32 @@
       vscode.postMessage({ type: 'text', text: e.key });
     }
   });
+
+  // --- camera/microphone permission prompt ---
+  let pendingPermissionRequestId = null;
+
+  const PERMISSION_MESSAGES = {
+    video: 'wants to use your camera',
+    audio: 'wants to use your microphone',
+    both: 'wants to use your camera and microphone'
+  };
+
+  function showPermissionPrompt(requestId, kind, origin) {
+    pendingPermissionRequestId = requestId;
+    permissionOrigin.textContent = origin || 'This site';
+    permissionMessage.textContent = ' ' + (PERMISSION_MESSAGES[kind] || 'wants to use your camera');
+    permissionPrompt.classList.remove('hidden');
+  }
+
+  function resolvePermission(allowed) {
+    if (pendingPermissionRequestId == null) return;
+    vscode.postMessage({ type: 'permissionResponse', requestId: pendingPermissionRequestId, allowed });
+    pendingPermissionRequestId = null;
+    permissionPrompt.classList.add('hidden');
+  }
+
+  permissionAllowBtn.addEventListener('click', () => resolvePermission(true));
+  permissionBlockBtn.addEventListener('click', () => resolvePermission(false));
 
   function hideStatus() {
     statusOverlay.classList.add('hidden');
@@ -834,6 +873,9 @@
         break;
       case 'domHighlight':
         updateDomHighlight(message.box);
+        break;
+      case 'permissionRequest':
+        showPermissionPrompt(message.requestId, message.kind, message.origin);
         break;
     }
   });
